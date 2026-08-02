@@ -1,0 +1,4 @@
+interface:
+  display_name: 'Ergouzi Video Gen'
+  short_description: 'Generate and transform videos through Ergouzi'
+  default_prompt: 'Use $ergouzi-video-gen to run an Ergouzi video task and download the result.'

@@ -19,9 +19,15 @@ publish private Ergouzi operations Skills.
 | `.claude-plugin/marketplace.json`  | Claude Code marketplace catalog                                |
 | `.agents/plugins/marketplace.json` | Codex marketplace catalog                                      |
 
-The framework intentionally starts with no real Skill or Plugin. Contributors
-add artifacts only when they solve a concrete user problem and include suitable
-verification.
+Available portable Skills:
+
+- `ergouzi-image-gen` submits and manages Ergouzi image generation, editing,
+  virtual try-on, and upscaling tasks.
+- `ergouzi-video-gen` submits and manages Ergouzi video generation, animation,
+  avatar, and person-replacement tasks.
+
+Both Skills require Python 3.10+, network access to `https://ergouzi.life`, and
+an Ergouzi API key configured locally.
 
 ## Installation
 
