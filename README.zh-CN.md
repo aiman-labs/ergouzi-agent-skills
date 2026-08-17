@@ -54,6 +54,44 @@ codex plugin add <plugin-name>@ergouzi-agent-skills
 只安装你信任的 Skill 与 Plugin。公开产物可能包含可执行脚本或工具集成，启用前请检查
 manifest、操作指令和源代码。
 
+## Ergouzi Media MCP 快速开始
+
+`ergouzi-media-mcp` 是一个本地 Codex 插件，将 Ergouzi 异步图片和视频 API 封装为配置诊断、
+模型查询与 Schema 查询、创建任务、查询状态、取消任务和下载结果工具。
+
+1. 使用上面的 Codex marketplace 命令安装插件：
+
+   ```bash
+   codex plugin add ergouzi-media-mcp@ergouzi-agent-skills
+   ```
+
+2. 安装 Node.js 22 或更高版本，并配置一把独立的媒体 API Key。该 Key 必须有目标图片/视频
+   模型的权限，它不是 Codex 使用的 GPT/文本模型 Key。在 macOS/Linux 中将它保存到
+   `~/.config/ergouzi/credentials.json`，Windows 中保存到
+   `%APPDATA%\\ergouzi\\credentials.json`：
+
+   ```json
+   {
+     "api_key": "YOUR_MEDIA_API_KEY",
+     "base_url": "https://ergouzi.life"
+   }
+   ```
+
+3. 新建一个 Codex 任务，并验证连接：
+
+   ```text
+   调用 ergouzi-media-mcp 的 check_configuration，检查配置但不要显示我的媒体 API Key。
+   ```
+
+4. 明确指定保存位置，再让 Codex 生成并下载媒体：
+
+   ```text
+   使用 ergouzi/e-image 生成一张雨夜上海街头图片，完成后下载到 ~/outputs。
+   ```
+
+MCP 会处理任务提交、轮询和下载；Codex 负责选择模型并组织模型参数。关于本地文件输入、
+工具参数、输出行为和故障排查，请阅读[完整插件指南](plugins/ergouzi-media-mcp/README.zh-CN.md)。
+
 ## 参与贡献
 
 提交前请阅读 [CONTRIBUTING.zh-CN.md](CONTRIBUTING.zh-CN.md)。新 Skill 或 Plugin 必须

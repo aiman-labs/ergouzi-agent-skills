@@ -10,6 +10,9 @@
   "scripts": {
     "create:skill": "node scripts/create-skill.mjs",
     "create:plugin": "node scripts/create-plugin.mjs",
+    "build:media-mcp": "node scripts/build-media-mcp.mjs",
+    "build:media-mcp:check": "node scripts/build-media-mcp.mjs --check",
+    "smoke:media-mcp": "node scripts/media-mcp/smoke.mjs",
     "catalog": "node scripts/generate-catalog.mjs",
     "catalog:check": "node scripts/generate-catalog.mjs --check",
     "validate": "node scripts/validate-repository.mjs",
@@ -19,12 +22,14 @@
     "lint": "markdownlint-cli2 '**/*.md'",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
-    "check": "npm run format:check && npm run lint && npm test && npm run validate && npm run catalog:check"
+    "check": "npm run build:media-mcp:check && npm run format:check && npm run lint && npm test && npm run validate && npm run catalog:check"
   },
   "license": "MIT",
   "devDependencies": {
     "@anthropic-ai/claude-code": "2.1.220",
+    "@modelcontextprotocol/sdk": "^1.30.0",
     "ajv": "^8.20.0",
+    "esbuild": "^0.28.2",
     "markdownlint-cli2": "^0.23.2",
     "prettier": "^3.9.6",
     "yaml": "^2.9.0"

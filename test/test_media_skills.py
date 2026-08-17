@@ -782,7 +782,9 @@ class MediaSkillTests(unittest.TestCase):
             )
             self.assertEqual(result.returncode, 0, result.stderr)
             self.assertTrue(output.is_file())
-            self.assertEqual(Path(json.loads(result.stdout)["files"][0]), output)
+            self.assertEqual(
+                Path(json.loads(result.stdout)["files"][0]).resolve(), output.resolve()
+            )
 
     def test_local_media_requires_a_supported_signature(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:

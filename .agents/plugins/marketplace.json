@@ -3,5 +3,18 @@
   "interface": {
     "displayName": "Ergouzi Agent Skills"
   },
-  "plugins": []
+  "plugins": [
+    {
+      "name": "ergouzi-media-mcp",
+      "source": {
+        "source": "local",
+        "path": "./plugins/ergouzi-media-mcp"
+      },
+      "policy": {
+        "installation": "AVAILABLE",
+        "authentication": "ON_INSTALL"
+      },
+      "category": "Developer Tools"
+    }
+  ]
 }

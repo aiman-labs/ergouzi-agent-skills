@@ -1,0 +1,8 @@
+{
+  "mcpServers": {
+    "ergouzi-media-mcp": {
+      "command": "node",
+      "args": ["scripts/server.mjs"]
+    }
+  }
+}

@@ -2,3 +2,4 @@ node_modules/
 coverage/
 templates/**/*.tmpl
 LICENSE
+plugins/ergouzi-media-mcp/scripts/server.mjs

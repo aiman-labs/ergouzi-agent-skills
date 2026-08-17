@@ -8,6 +8,6 @@ Portable Skills are discovered directly from `skills/` during generation.
 
 ## Plugins
 
-| Plugin     | Claude Code | Codex | Version |
-| ---------- | ----------- | ----- | ------- |
-| _None yet_ | —           | —     | —       |
+| Plugin            | Claude Code | Codex | Version                    |
+| ----------------- | ----------- | ----- | -------------------------- |
+| ergouzi-media-mcp | No          | Yes   | 0.2.0+codex.20260816153249 |

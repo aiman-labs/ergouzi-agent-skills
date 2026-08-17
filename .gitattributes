@@ -1,0 +1,2 @@
+* text=auto eol=lf
+plugins/ergouzi-media-mcp/scripts/server.mjs -whitespace

@@ -22,6 +22,11 @@ file conversion, request submission, task polling, and result download.
   `ERGOUZI_API_KEY` and `ERGOUZI_BASE_URL` are accepted when no config exists.
 - If credentials are missing, ask the user to initialize them locally with
   `python scripts/configure.py`. Never ask the user to paste a key into chat.
+- If the optional `ergouzi-media-mcp` Codex plugin is installed, prefer its
+  `check_configuration`, `list_models`, `get_model_schema`,
+  `create_prediction`, `get_prediction`, `cancel_prediction`, and
+  `download_prediction` tools for the API lifecycle. Keep the Python runner
+  as the fallback when the MCP tools are unavailable.
 - Accept supported media as directly downloadable HTTPS URLs, data URIs, or
   local files that fit the existing 4 MiB JSON request limit: JPEG/PNG/WebP
   images, MP4 video, and FLAC/MP3/WAV audio. Use
@@ -45,9 +50,10 @@ file conversion, request submission, task polling, and result download.
    runner resolves `$local_file` objects before submission and otherwise leaves
    input values unchanged. Prefer a UTF-8 JSON file for structured input across
    operating systems; files and stdin may include a UTF-8 BOM.
-4. Run `scripts/run.py predict`. It creates one logical task, reusing the same
-   idempotency key for bounded transport retries, records the local `task_*` ID,
-   polls to a terminal state, and downloads successful outputs.
+4. Prefer the MCP tools when available. Otherwise run `scripts/run.py predict`.
+   Both paths create one logical task, reuse the same idempotency key for
+   bounded transport retries, record the `task_*` ID, poll to a terminal state,
+   and download successful outputs.
 5. Report the model, task ID, terminal status, and absolute saved paths.
 6. If execution was interrupted or timed out, resume with
    `status --wait --download`. Do not create a replacement task unless the user

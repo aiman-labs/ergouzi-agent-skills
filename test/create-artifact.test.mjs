@@ -64,7 +64,9 @@ for (const [target, expected] of [
       target,
       description: `Use the ${target} example plugin.`,
     });
-    const files = await fs.readdir(pluginRoot, { recursive: true });
+    const files = (await fs.readdir(pluginRoot, { recursive: true })).map(
+      (file) => file.split(path.sep).join('/'),
+    );
     for (const expectedPath of expected) {
       assert.ok(files.includes(expectedPath), `missing ${expectedPath}`);
     }

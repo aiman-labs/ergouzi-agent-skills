@@ -1,6 +1,6 @@
 # Ergouzi Media MCP Design
 
-Status: Accepted; implementation deferred
+Status: Implemented; production-hardening in progress
 
 ## Decision
 
@@ -31,18 +31,21 @@ validation, billing, and task state.
 
 Use generic tools rather than one tool per model:
 
-1. `list_models()` returns the media models visible to the current API key and
-   their objective input metadata.
-2. `create_prediction(model, input)` resolves explicit `$local_file` values,
+1. `check_configuration()` verifies local credentials, file permissions, and
+   API access without returning the API key.
+2. `list_models()` returns the media models visible to the current API key.
+3. `get_model_schema(model)` returns the current input and output schema with a
+   short local cache.
+4. `create_prediction(model, input)` resolves explicit `$local_file` values,
    performs one logical idempotent submission, and returns the local `task_*`
    ID without waiting indefinitely.
-3. `get_prediction(task_id, wait_seconds?)` returns canonical task state. A
+5. `get_prediction(task_id, wait_seconds?)` returns canonical task state. A
    bounded wait may poll for at most the configured tool-call budget.
-4. `cancel_prediction(task_id)` requests cancellation for an existing task.
-5. `download_prediction(task_id, output_dir?)` downloads only outputs associated
+6. `cancel_prediction(task_id)` requests cancellation for an existing task.
+7. `download_prediction(task_id, output_dir?)` downloads only outputs associated
    with that task and returns absolute local paths.
 
-The nine models share these tools. Model-specific fields stay in the generic
+The ten models share these tools. Model-specific fields stay in the generic
 `input` object and are validated by New API.
 
 ## Required Safeguards
@@ -78,7 +81,7 @@ transport. It is explicitly outside the first version.
 ## Implementation Sequence
 
 1. Scaffold an `ergouzi-media-mcp` plugin and add behavioral contract tests.
-2. Implement the five local stdio tools by reusing the validated request and
+2. Implement the local stdio tools by reusing the validated request and
    media-handling behavior of the current Skills.
 3. Update both Skills to prefer MCP tools with the current scripts as fallback.
 4. Test create, resume, cancel, external-URL download, local-file conversion,
