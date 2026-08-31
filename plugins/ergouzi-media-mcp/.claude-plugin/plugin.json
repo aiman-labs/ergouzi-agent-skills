@@ -1,0 +1,13 @@
+{
+  "name": "ergouzi-media-mcp",
+  "version": "0.2.2",
+  "description": "A local MCP plugin for creating, tracking, cancelling, and downloading Ergouzi image and video predictions.",
+  "author": {
+    "name": "Aiman Labs",
+    "url": "https://github.com/aiman-labs"
+  },
+  "homepage": "https://github.com/aiman-labs/ergouzi-agent-skills",
+  "repository": "https://github.com/aiman-labs/ergouzi-agent-skills",
+  "license": "MIT",
+  "keywords": ["agent-skills", "ergouzi", "mcp", "media"]
+}

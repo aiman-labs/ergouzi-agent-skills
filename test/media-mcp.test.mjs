@@ -12,6 +12,7 @@ import {
 import { createServer } from 'node:http';
 import os from 'node:os';
 import path from 'node:path';
+import { Readable } from 'node:stream';
 import test from 'node:test';
 
 import {
@@ -19,8 +20,10 @@ import {
   assertSafeDownloadUrl,
   callTool,
   cancelPrediction,
+  configPath,
   credentialDiagnostics,
   createPrediction,
+  defaultOutputDirectory,
   downloadPrediction,
   fetchPinned,
   fetchOutput,
@@ -28,9 +31,11 @@ import {
   getPrediction,
   loadCredentials,
   mcpToolResult,
+  normalizeBaseUrl,
   resolveMediaInputs,
   toolDefinitions,
 } from '../plugins/ergouzi-media-mcp/scripts/lib.mjs';
+import { validateMediaMcpInstall } from '../scripts/media-mcp/validate-install.mjs';
 
 async function startServer(handler, host = '127.0.0.1') {
   const server = createServer(handler);
@@ -98,6 +103,29 @@ test('media MCP exposes stable prediction and diagnostic tools', () => {
     (tool) => tool.name === 'cancel_prediction',
   );
   assert.match(cancellation.description, /explicit user confirmation/);
+  for (const name of ['create_prediction', 'cancel_prediction']) {
+    const tool = toolDefinitions().find((item) => item.name === name);
+    assert.equal(tool._meta['anthropic/requiresUserInteraction'], true);
+  }
+});
+
+test('tool dispatch rejects unknown and explicitly null optional arguments', async () => {
+  await assert.rejects(
+    callTool(
+      'list_models',
+      { unexpected: true },
+      credentials('https://ergouzi.life'),
+    ),
+    /Unexpected tool argument/,
+  );
+  await assert.rejects(
+    callTool(
+      'create_prediction',
+      { model: 'ergouzi/e-image', input: {}, idempotency_key: null },
+      credentials('https://ergouzi.life'),
+    ),
+    /idempotency_key must be/,
+  );
 });
 
 test('MCP tool results include structured content for successful objects', () => {
@@ -482,6 +510,183 @@ test('createPrediction retries a transient response with the same idempotency ke
   }
 });
 
+test('createPrediction rejects unsafe idempotency keys before submitting', async () => {
+  await assert.rejects(
+    createPrediction(
+      credentials('https://ergouzi.life'),
+      'ergouzi/e-image',
+      { prompt: 'safe key validation' },
+      'unsafe key with spaces',
+    ),
+    /ASCII letters/,
+  );
+});
+
+test('loadCredentials rejects malformed JSON objects and non-string fields', async () => {
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'ergouzi-mcp-config-invalid-'),
+  );
+  const configFile = path.join(temporary, 'credentials.json');
+  try {
+    await writeFile(configFile, 'null');
+    await assert.rejects(
+      loadCredentials({ env: { ERGOUZI_CONFIG_FILE: configFile } }),
+      /must contain a JSON object/,
+    );
+    await writeFile(
+      configFile,
+      JSON.stringify({
+        api_key: { secret: true },
+        base_url: 'https://ergouzi.life',
+      }),
+    );
+    await assert.rejects(
+      loadCredentials({ env: { ERGOUZI_CONFIG_FILE: configFile } }),
+      /field api_key must be a string/,
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('default output directories stay outside the plugin cache', () => {
+  const windowsPluginData = [
+    'C:',
+    'Users',
+    'example',
+    'AppData',
+    'Roaming',
+    'plugin-data',
+  ].join('\\');
+  assert.equal(
+    defaultOutputDirectory({
+      env: { CLAUDE_PLUGIN_DATA: windowsPluginData },
+      platform: 'win32',
+    }),
+    path.join(windowsPluginData, 'outputs'),
+  );
+  assert.equal(
+    defaultOutputDirectory({
+      env: { HOME: '/home/example' },
+      platform: 'linux',
+    }),
+    path.join(
+      '/home/example',
+      '.local',
+      'state',
+      'ergouzi',
+      'media-mcp',
+      'outputs',
+    ),
+  );
+});
+
+test('credential config paths stay absolute across host environment fallbacks', () => {
+  const linuxHome = path.join('/home', 'example');
+  const windowsHome = ['C:', 'Users', 'example'].join('\\');
+  assert.equal(
+    configPath({
+      env: { HOME: linuxHome },
+      platform: 'linux',
+    }),
+    path.join(linuxHome, '.config', 'ergouzi', 'credentials.json'),
+  );
+  assert.equal(
+    configPath({
+      env: { USERPROFILE: windowsHome },
+      platform: 'win32',
+    }),
+    path.join(windowsHome, 'AppData', 'Roaming', 'ergouzi', 'credentials.json'),
+  );
+  assert.equal(
+    path.isAbsolute(configPath({ env: {}, platform: process.platform })),
+    true,
+  );
+  assert.equal(
+    configPath({
+      env: { HOME: linuxHome, ERGOUZI_CONFIG_FILE: '~/custom.json' },
+      platform: 'linux',
+    }),
+    path.resolve(linuxHome, 'custom.json'),
+  );
+});
+
+test('base URL normalization accepts the documented optional v1 suffix', () => {
+  assert.equal(
+    normalizeBaseUrl('https://api.ergouzi.life/v1'),
+    'https://api.ergouzi.life',
+  );
+  assert.equal(
+    normalizeBaseUrl('https://api.ergouzi.life/v1/'),
+    'https://api.ergouzi.life',
+  );
+  assert.throws(
+    () => normalizeBaseUrl('https://api.ergouzi.life/v1/customer'),
+    /must not contain credentials, a path/,
+  );
+});
+
+test('copied plugin passes both host manifest and MCP startup checks', async () => {
+  const pluginPath = path.resolve('plugins/ergouzi-media-mcp');
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'ergouzi-install-check-'),
+  );
+  const copiedPlugin = path.join(temporary, 'ergouzi-media-mcp');
+  try {
+    await cp(pluginPath, copiedPlugin, { recursive: true });
+    const result = await validateMediaMcpInstall(copiedPlugin);
+    assert.equal(result.toolCount, 7);
+    assert.equal(
+      result.serverPath,
+      path.join(copiedPlugin, 'scripts', 'server.mjs'),
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('install verifier executes the declared Codex command and arguments', async () => {
+  const pluginPath = path.resolve('plugins/ergouzi-media-mcp');
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'ergouzi-install-command-check-'),
+  );
+  const copiedPlugin = path.join(temporary, 'ergouzi-media-mcp');
+  try {
+    await cp(pluginPath, copiedPlugin, { recursive: true });
+    const configPathname = path.join(copiedPlugin, '.codex.mcp.json');
+    const config = JSON.parse(await readFile(configPathname, 'utf8'));
+    config.mcpServers['ergouzi-media-mcp'].command = 'missing-node-command';
+    await writeFile(configPathname, `${JSON.stringify(config, null, 2)}\n`);
+    await assert.rejects(
+      validateMediaMcpInstall(copiedPlugin),
+      /failed to start|ENOENT/i,
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
+test('install verifier executes the declared Codex working directory', async () => {
+  const pluginPath = path.resolve('plugins/ergouzi-media-mcp');
+  const temporary = await mkdtemp(
+    path.join(os.tmpdir(), 'ergouzi-install-cwd-check-'),
+  );
+  const copiedPlugin = path.join(temporary, 'ergouzi-media-mcp');
+  try {
+    await cp(pluginPath, copiedPlugin, { recursive: true });
+    const configPathname = path.join(copiedPlugin, '.codex.mcp.json');
+    const config = JSON.parse(await readFile(configPathname, 'utf8'));
+    config.mcpServers['ergouzi-media-mcp'].cwd = 'missing-working-directory';
+    await writeFile(configPathname, `${JSON.stringify(config, null, 2)}\n`);
+    await assert.rejects(
+      validateMediaMcpInstall(copiedPlugin),
+      /failed to start|ENOENT/i,
+    );
+  } finally {
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test('API errors preserve validation details and rate-limit retry guidance', async () => {
   const api = await startServer((request, response) => {
     const status = Number(request.url.slice(1));
@@ -519,6 +724,26 @@ test('API errors preserve validation details and rate-limit retry guidance', asy
   }
 });
 
+test('API response body reads honor the request timeout', async () => {
+  let response;
+  const api = await startServer((_request, output) => {
+    response = output;
+    output.writeHead(200, { 'content-type': 'application/json' });
+    output.write('{"partial":');
+  });
+  try {
+    await assert.rejects(
+      apiJson(credentials(api.baseUrl), 'GET', '/slow-body', undefined, {
+        timeoutMs: 10,
+      }),
+      /timed out/,
+    );
+  } finally {
+    response?.destroy();
+    await api.close();
+  }
+});
+
 test(
   'configuration diagnostics warn about permissive credential files',
   { skip: process.platform === 'win32' },
@@ -550,10 +775,13 @@ test(
 );
 
 test('configuration diagnostics omit POSIX permissions on Windows', async () => {
+  const windowsConfigFile = ['C:', 'Users', 'example', 'credentials.json'].join(
+    '\\',
+  );
   const diagnostics = await credentialDiagnostics(
     {
       baseUrl: 'https://ergouzi.life',
-      configFile: 'C:\\Users\\example\\credentials.json',
+      configFile: windowsConfigFile,
       credentialSource: 'credentials_file',
     },
     { platform: 'win32' },
@@ -996,6 +1224,81 @@ test('download URL validation rejects public hostnames that resolve to private a
     }),
     /private or local address/,
   );
+});
+
+test('output downloads allow the managed first-party DNS mapping range only', async () => {
+  const body = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const lookup = async () => [{ address: '198.18.0.78', family: 4 }];
+  const requests = [];
+  const requestImpl = (options, callback) => {
+    requests.push(options);
+    const response = Readable.from([body]);
+    response.statusCode = 200;
+    response.headers = { 'content-type': 'image/png' };
+    queueMicrotask(() => callback(response));
+    return {
+      destroy() {},
+      end() {},
+      once() {},
+    };
+  };
+
+  const download = await fetchOutput(
+    'https://ergouzi.life/customer/v1/assets/test',
+    credentials('https://api.ergouzi.life'),
+    { lookup, requestImpl },
+  );
+  assert.equal(download.response.status, 200);
+  assert.equal(requests[0].hostname, '198.18.0.78');
+  assert.equal(requests[0].headers.host, 'ergouzi.life');
+  assert.equal(requests[0].servername, 'ergouzi.life');
+  await new Response(download.response.body).arrayBuffer();
+  download.release();
+
+  const mixedLookup = async () => [
+    { address: '198.19.255.254', family: 4 },
+    { address: '93.184.216.34', family: 4 },
+  ];
+  await assert.rejects(
+    fetchOutput(
+      'https://media.example/result.png',
+      credentials('https://api.ergouzi.life'),
+      {
+        fetchImpl: async () => new Response(body),
+        lookup: mixedLookup,
+      },
+    ),
+    /private or local address/,
+  );
+
+  await assert.rejects(
+    fetchOutput(
+      'https://ergouzi.life/customer/v1/assets/test',
+      credentials('https://api.example'),
+      {
+        fetchImpl: async () => new Response(body),
+        lookup,
+      },
+    ),
+    /private or local address/,
+  );
+});
+
+test('output downloads allow the upper boundary of the managed mapping range', async () => {
+  const download = await fetchOutput(
+    'https://ergouzi.life/customer/v1/assets/test',
+    credentials('https://api.ergouzi.life'),
+    {
+      fetchImpl: async () =>
+        new Response('ok', {
+          status: 200,
+          headers: { 'content-type': 'image/png' },
+        }),
+      lookup: async () => [{ address: '198.19.255.254', family: 4 }],
+    },
+  );
+  await download.response.arrayBuffer();
+  download.release();
 });
 
 test('download URL validation rejects non-global IPv6 addresses', async () => {

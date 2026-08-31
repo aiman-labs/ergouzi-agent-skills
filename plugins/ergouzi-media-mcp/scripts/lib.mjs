@@ -24,6 +24,7 @@ export const MAX_JSON_BYTES = 4 * 1024 * 1024;
 export const MAX_EXPANDED_INPUT_BYTES = 4 * 1024 * 1024;
 export const MAX_LOCAL_MEDIA_BYTES = 3 * 1024 * 1024;
 export const MAX_OUTPUT_BYTES = 2 * 1024 * 1024 * 1024;
+export const MAX_TOTAL_OUTPUT_BYTES = 4 * 1024 * 1024 * 1024;
 export const MAX_WAIT_SECONDS = 120;
 export const DOWNLOAD_TIMEOUT_MS = 120_000;
 
@@ -79,6 +80,11 @@ const OUTPUT_MEDIA_TYPES = new Set([
   'audio/x-wav',
   'audio/flac',
 ]);
+// Some managed developer networks map public DNS names to the RFC 2544
+// benchmark range while still routing the original TLS hostname correctly.
+// Only the Ergouzi-owned API/asset names may use that compatibility path.
+const FIRST_PARTY_HOST_SUFFIX = '.ergouzi.life';
+const RESERVED_DNS_MAPPING_RANGE = /^198\.(?:18|19)\./;
 
 const MODEL_MEDIA_FIELDS = {
   'ergouzi/e-image': {},
@@ -130,26 +136,27 @@ export function configPath({
   platform = process.platform,
 } = {}) {
   const override = String(env.ERGOUZI_CONFIG_FILE ?? '').trim();
-  if (override)
-    return path.resolve(override.replace(/^~(?=$|[\\/])/, env.HOME ?? ''));
+  const home = env.HOME || env.USERPROFILE || homedir();
+  if (override) return path.resolve(override.replace(/^~(?=$|[\\/])/, home));
   if (platform === 'win32') {
     return path.join(
-      env.APPDATA || path.join(env.USERPROFILE || '', 'AppData', 'Roaming'),
+      env.APPDATA || path.join(home, 'AppData', 'Roaming'),
       'ergouzi',
       'credentials.json',
     );
   }
   return path.join(
-    env.XDG_CONFIG_HOME || path.join(env.HOME || '', '.config'),
+    env.XDG_CONFIG_HOME || path.join(home, '.config'),
     'ergouzi',
     'credentials.json',
   );
 }
 
 export function normalizeBaseUrl(value) {
+  const raw = String(value).trim().replace(/\/+$/, '');
   let parsed;
   try {
-    parsed = new URL(String(value).trim());
+    parsed = new URL(raw);
   } catch (error) {
     throw new MediaMcpError('Ergouzi base URL must be an absolute URL', {
       code: 'INVALID_BASE_URL',
@@ -168,7 +175,7 @@ export function normalizeBaseUrl(value) {
     parsed.password ||
     parsed.search ||
     parsed.hash ||
-    !['', '/'].includes(parsed.pathname)
+    !['', '/', '/v1'].includes(parsed.pathname)
   ) {
     throw new MediaMcpError(
       'Ergouzi base URL must not contain credentials, a path, query, or fragment',
@@ -195,6 +202,18 @@ export async function loadCredentials({
       throw new MediaMcpError(
         `Unable to read Ergouzi credentials file: ${file}`,
         { code: 'INVALID_CREDENTIALS_FILE', cause: error },
+      );
+  }
+  if (!saved || typeof saved !== 'object' || Array.isArray(saved))
+    throw new MediaMcpError(
+      `Ergouzi credentials file must contain a JSON object: ${file}`,
+      { code: 'INVALID_CREDENTIALS_FILE' },
+    );
+  for (const field of ['api_key', 'base_url']) {
+    if (saved[field] !== undefined && typeof saved[field] !== 'string')
+      throw new MediaMcpError(
+        `Ergouzi credentials file field ${field} must be a string: ${file}`,
+        { code: 'INVALID_CREDENTIALS_FILE' },
       );
   }
   const mediaApiKey = String(env.ERGOUZI_MEDIA_API_KEY || '').trim();
@@ -390,7 +409,14 @@ export async function apiJson(
         `Ergouzi API request failed: ${redactSecrets(error?.message || error, [credentials.apiKey])}`,
       );
     }
-    const raw = await readResponseBytes(response, MAX_JSON_BYTES);
+    let raw;
+    try {
+      raw = await readResponseBytes(response, MAX_JSON_BYTES);
+    } catch (error) {
+      if (controller.signal.aborted)
+        throw new ApiError('Ergouzi API request timed out');
+      throw error;
+    }
     const text = raw.toString('utf8');
     let parsed = {};
     if (text.trim()) {
@@ -429,6 +455,20 @@ export async function apiJson(
 function assertObject(value, message) {
   if (!value || typeof value !== 'object' || Array.isArray(value))
     throw new MediaMcpError(message, { code: 'INVALID_INPUT' });
+}
+
+function assertAllowedArguments(args, allowed) {
+  const unexpected = Object.keys(args).filter((name) => !allowed.has(name));
+  if (unexpected.length > 0)
+    throw new MediaMcpError(
+      `Unexpected tool argument(s): ${unexpected.join(', ')}`,
+      { code: 'INVALID_INPUT' },
+    );
+}
+
+function objectToolResult(value, label) {
+  assertObject(value, `${label} returned an invalid object response`);
+  return value;
 }
 
 function validateModel(model) {
@@ -695,11 +735,15 @@ export async function createPrediction(
   if (
     typeof idempotencyKey !== 'string' ||
     !idempotencyKey ||
-    idempotencyKey.length > 128
+    idempotencyKey.length > 128 ||
+    !/^[A-Za-z0-9._:-]+$/.test(idempotencyKey)
   )
-    throw new MediaMcpError('idempotency_key must be 1-128 characters', {
-      code: 'INVALID_IDEMPOTENCY_KEY',
-    });
+    throw new MediaMcpError(
+      'idempotency_key must be 1-128 ASCII letters, digits, ., _, :, or -',
+      {
+        code: 'INVALID_IDEMPOTENCY_KEY',
+      },
+    );
   const encodedInput = await resolveMediaInputs(model, input);
   const [owner, name] = model.split('/');
   const requestPath = `/customer/v1/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/predictions`;
@@ -975,9 +1019,25 @@ function isNonPublicIp(address) {
   return value >> 125n !== 1n;
 }
 
+function isFirstPartyHostname(hostname) {
+  const normalized = String(hostname).toLowerCase().replace(/\.+$/, '');
+  return (
+    normalized === FIRST_PARTY_HOST_SUFFIX.slice(1) ||
+    normalized.endsWith(FIRST_PARTY_HOST_SUFFIX)
+  );
+}
+
+function isReservedDnsMapping(address) {
+  return isIP(address) === 4 && RESERVED_DNS_MAPPING_RANGE.test(address);
+}
+
 async function resolveSafeDownloadUrl(
   value,
-  { allowLocalHttp = false, lookup = lookupHost } = {},
+  {
+    allowLocalHttp = false,
+    allowReservedFirstParty = false,
+    lookup = lookupHost,
+  } = {},
 ) {
   let target;
   try {
@@ -1020,10 +1080,17 @@ async function resolveSafeDownloadUrl(
         { code: 'UNSAFE_OUTPUT_URL', cause: error },
       );
     }
+    const reservedFirstPartyMapping =
+      allowReservedFirstParty &&
+      isFirstPartyHostname(target.hostname) &&
+      Array.isArray(addresses) &&
+      addresses.length > 0 &&
+      addresses.every((item) => isReservedDnsMapping(item.address));
     if (
       !Array.isArray(addresses) ||
       addresses.length === 0 ||
-      addresses.some((item) => isNonPublicIp(item.address))
+      (addresses.some((item) => isNonPublicIp(item.address)) &&
+        !reservedFirstPartyMapping)
     )
       throw new MediaMcpError(
         'Output URL hostname resolves to a private or local address',
@@ -1067,7 +1134,7 @@ function responseFromIncomingMessage(message, url) {
 export async function fetchPinned(
   url,
   addresses = [],
-  { headers = {}, method = 'GET', signal } = {},
+  { headers = {}, method = 'GET', requestImpl, signal } = {},
 ) {
   const candidates = addresses.length > 0 ? addresses : [undefined];
   const connectionHostname = url.hostname.replace(/^\[|\]$/g, '');
@@ -1078,7 +1145,7 @@ export async function fetchPinned(
       return await new Promise((resolve, reject) => {
         const transport = url.protocol === 'https:' ? https : http;
         const requestHeaders = { ...headers, host: url.host };
-        const request = transport.request(
+        const request = (requestImpl || transport.request.bind(transport))(
           {
             agent: false,
             headers: requestHeaders,
@@ -1144,12 +1211,14 @@ export async function fetchOutput(
   {
     fetchImpl = fetch,
     lookup = lookupHost,
+    requestImpl,
     timeoutMs = DOWNLOAD_TIMEOUT_MS,
   } = {},
 ) {
   const base = new URL(credentials.baseUrl);
   const allowLocalHttp =
     base.protocol === 'http:' && isLocalHostname(base.hostname);
+  const allowReservedFirstParty = isFirstPartyHostname(base.hostname);
   const timeoutError = new MediaMcpError('Output download timed out', {
     code: 'DOWNLOAD_TIMEOUT',
   });
@@ -1157,7 +1226,11 @@ export async function fetchOutput(
   const timer = setTimeout(() => controller.abort(timeoutError), timeoutMs);
   try {
     let resolved = await awaitWithAbort(
-      resolveSafeDownloadUrl(url, { allowLocalHttp, lookup }),
+      resolveSafeDownloadUrl(url, {
+        allowLocalHttp,
+        allowReservedFirstParty,
+        lookup,
+      }),
       controller.signal,
     );
     let target = resolved.target;
@@ -1175,6 +1248,7 @@ export async function fetchOutput(
           fetchImpl === fetch
             ? await fetchPinned(target, resolved.addresses, {
                 headers,
+                requestImpl,
                 signal: controller.signal,
               })
             : await fetchImpl(target, {
@@ -1196,6 +1270,7 @@ export async function fetchOutput(
             : await awaitWithAbort(
                 assertSafeDownloadUrl(response.url || target.toString(), {
                   allowLocalHttp,
+                  allowReservedFirstParty,
                   lookup,
                 }),
                 controller.signal,
@@ -1221,6 +1296,7 @@ export async function fetchOutput(
       resolved = await awaitWithAbort(
         resolveSafeDownloadUrl(new URL(location, target).toString(), {
           allowLocalHttp,
+          allowReservedFirstParty,
           lookup,
         }),
         controller.signal,
@@ -1323,17 +1399,24 @@ class ByteLimitTransform extends Transform {
 
   _transform(chunk, encoding, callback) {
     this.total += chunk.length;
-    if (this.total > this.limit)
+    if (this.total > this.limit) {
+      const cumulative = this.limit !== MAX_OUTPUT_BYTES;
       callback(
-        new MediaMcpError('Generated output exceeds the 2 GiB download limit', {
-          code: 'OUTPUT_TOO_LARGE',
-        }),
+        new MediaMcpError(
+          `Generated output exceeds the ${cumulative ? 'cumulative 4 GiB' : '2 GiB'} download limit`,
+          { code: cumulative ? 'TOTAL_OUTPUT_TOO_LARGE' : 'OUTPUT_TOO_LARGE' },
+        ),
       );
-    else callback(null, chunk);
+    } else callback(null, chunk);
   }
 }
 
-async function downloadOne(response, destination, signal) {
+async function downloadOne(
+  response,
+  destination,
+  signal,
+  maxBytes = MAX_OUTPUT_BYTES,
+) {
   const temporary = `${destination}.tmp-${randomUUID()}`;
   try {
     const contentLength = response.headers.get('content-length')?.trim();
@@ -1341,11 +1424,13 @@ async function downloadOne(response, destination, signal) {
       contentLength && /^[0-9]+$/.test(contentLength)
         ? Number(contentLength)
         : null;
-    if (length !== null && length > MAX_OUTPUT_BYTES)
+    if (length !== null && length > maxBytes) {
+      const cumulative = maxBytes !== MAX_OUTPUT_BYTES;
       throw new MediaMcpError(
-        'Generated output exceeds the 2 GiB download limit',
-        { code: 'OUTPUT_TOO_LARGE' },
+        `Generated output exceeds the ${cumulative ? 'cumulative 4 GiB' : '2 GiB'} download limit`,
+        { code: cumulative ? 'TOTAL_OUTPUT_TOO_LARGE' : 'OUTPUT_TOO_LARGE' },
       );
+    }
     if (length === 0)
       throw new MediaMcpError('Generated output is empty', {
         code: 'EMPTY_OUTPUT',
@@ -1355,7 +1440,7 @@ async function downloadOne(response, destination, signal) {
     const source = response.body
       ? Readable.fromWeb(response.body)
       : Readable.from([]);
-    const byteLimit = new ByteLimitTransform(MAX_OUTPUT_BYTES);
+    const byteLimit = new ByteLimitTransform(maxBytes);
     await pipeline(
       source,
       byteLimit,
@@ -1417,29 +1502,52 @@ function outputUrls(output) {
   );
 }
 
-function expandHomePath(value) {
+function expandHomePath(value, home = homedir()) {
   const text = String(value);
   if (!/^~(?:$|[\\/])/.test(text)) return text;
-  const home = homedir();
   return text === '~' ? home : path.join(home, text.slice(2));
 }
 
-export async function downloadPrediction(
-  credentials,
-  taskId,
-  outputDir = path.join(process.cwd(), 'outputs', 'ergouzi-media-mcp'),
-) {
+export function defaultOutputDirectory({
+  env = process.env,
+  platform = process.platform,
+} = {}) {
+  const configured = String(env.ERGOUZI_MEDIA_MCP_OUTPUT_DIR ?? '').trim();
+  const home = env.HOME || env.USERPROFILE || homedir();
+  if (configured) return path.resolve(expandHomePath(configured, home));
+  const pluginData = String(
+    env.CLAUDE_PLUGIN_DATA || env.PLUGIN_DATA || '',
+  ).trim();
+  if (pluginData) return path.join(pluginData, 'outputs');
+  const stateRoot =
+    platform === 'win32'
+      ? env.LOCALAPPDATA || path.join(home, 'AppData', 'Local')
+      : env.XDG_STATE_HOME || path.join(home, '.local', 'state');
+  return path.join(stateRoot, 'ergouzi', 'media-mcp', 'outputs');
+}
+
+export async function downloadPrediction(credentials, taskId, outputDir) {
   validateTaskId(taskId);
+  if (
+    outputDir !== undefined &&
+    (typeof outputDir !== 'string' || !outputDir.trim())
+  )
+    throw new MediaMcpError('output_dir must be a nonempty string', {
+      code: 'INVALID_OUTPUT_DIR',
+    });
   const prediction = await getPrediction(credentials, taskId, 0);
   if (prediction?.status !== 'succeeded')
     throw new MediaMcpError(
       `Prediction ${taskId} is not succeeded (status: ${prediction?.status || 'unknown'})`,
       { code: 'PREDICTION_NOT_READY' },
     );
-  const outputDirectory = path.resolve(expandHomePath(outputDir));
+  const outputDirectory = path.resolve(
+    expandHomePath(outputDir ?? defaultOutputDirectory()),
+  );
   await mkdir(outputDirectory, { recursive: true });
   const files = [];
   const downloads = [];
+  let totalBytes = 0;
   for (const [index, source] of outputUrls(prediction.output).entries()) {
     const sourceUrl = source.startsWith('/')
       ? new URL(source, `${credentials.baseUrl}/`).toString()
@@ -1458,9 +1566,21 @@ export async function downloadPrediction(
         outputDirectory,
         `result-${index + 1}${extensionFor(response.headers.get('content-type'), target.toString())}`,
       );
-      const output = await downloadOne(response, destination, signal);
+      const remainingBytes = MAX_TOTAL_OUTPUT_BYTES - totalBytes;
+      if (remainingBytes <= 0)
+        throw new MediaMcpError(
+          'Generated outputs exceed the 4 GiB cumulative download limit',
+          { code: 'TOTAL_OUTPUT_TOO_LARGE' },
+        );
+      const output = await downloadOne(
+        response,
+        destination,
+        signal,
+        Math.min(MAX_OUTPUT_BYTES, remainingBytes),
+      );
       files.push(output.path);
       downloads.push(output);
+      totalBytes += output.bytes;
     } finally {
       download.release();
     }
@@ -1655,6 +1775,7 @@ export function toolDefinitions() {
         destructiveHint: false,
         openWorldHint: true,
       },
+      _meta: { 'anthropic/requiresUserInteraction': true },
     },
     {
       name: 'get_prediction',
@@ -1701,6 +1822,7 @@ export function toolDefinitions() {
         destructiveHint: true,
         openWorldHint: true,
       },
+      _meta: { 'anthropic/requiresUserInteraction': true },
     },
     {
       name: 'download_prediction',
@@ -1716,7 +1838,7 @@ export function toolDefinitions() {
           output_dir: {
             type: 'string',
             description:
-              'Optional local directory; defaults to outputs/ergouzi-media-mcp.',
+              'Optional local directory; defaults to the host plugin data/state directory.',
           },
         },
         required: ['task_id'],
@@ -1752,28 +1874,74 @@ export async function callTool(name, args = {}, credentials) {
     });
   switch (name) {
     case 'list_models': {
+      assertAllowedArguments(args, new Set());
       const models = await apiJson(credentials, 'GET', '/customer/v1/models');
-      return Array.isArray(models) ? { results: models } : models;
-    }
-    case 'get_model_schema':
-      return getModelSchema(credentials, args.model, {
-        refresh: args.refresh ?? false,
-      });
-    case 'create_prediction':
-      return createPrediction(
-        credentials,
-        args.model,
-        args.input,
-        args.idempotency_key || randomUUID(),
+      return objectToolResult(
+        Array.isArray(models) ? { results: models } : models,
+        'list_models',
       );
-    case 'get_prediction':
-      return getPrediction(credentials, args.task_id, args.wait_seconds ?? 0);
-    case 'cancel_prediction':
-      return cancelPrediction(credentials, args.task_id);
-    case 'download_prediction':
-      return downloadPrediction(credentials, args.task_id, args.output_dir);
+    }
+    case 'get_model_schema': {
+      assertAllowedArguments(args, new Set(['model', 'refresh']));
+      return objectToolResult(
+        await getModelSchema(credentials, args.model, {
+          refresh: Object.hasOwn(args, 'refresh') ? args.refresh : false,
+        }),
+        'get_model_schema',
+      );
+    }
+    case 'create_prediction': {
+      assertAllowedArguments(
+        args,
+        new Set(['model', 'input', 'idempotency_key']),
+      );
+      return objectToolResult(
+        await createPrediction(
+          credentials,
+          args.model,
+          args.input,
+          Object.hasOwn(args, 'idempotency_key')
+            ? args.idempotency_key
+            : randomUUID(),
+        ),
+        'create_prediction',
+      );
+    }
+    case 'get_prediction': {
+      assertAllowedArguments(args, new Set(['task_id', 'wait_seconds']));
+      return objectToolResult(
+        await getPrediction(
+          credentials,
+          args.task_id,
+          Object.hasOwn(args, 'wait_seconds') ? args.wait_seconds : 0,
+        ),
+        'get_prediction',
+      );
+    }
+    case 'cancel_prediction': {
+      assertAllowedArguments(args, new Set(['task_id']));
+      return objectToolResult(
+        await cancelPrediction(credentials, args.task_id),
+        'cancel_prediction',
+      );
+    }
+    case 'download_prediction': {
+      assertAllowedArguments(args, new Set(['task_id', 'output_dir']));
+      return objectToolResult(
+        await downloadPrediction(
+          credentials,
+          args.task_id,
+          Object.hasOwn(args, 'output_dir') ? args.output_dir : undefined,
+        ),
+        'download_prediction',
+      );
+    }
     case 'check_configuration':
-      return checkConfiguration(credentials);
+      assertAllowedArguments(args, new Set());
+      return objectToolResult(
+        await checkConfiguration(credentials),
+        'check_configuration',
+      );
     default:
       throw new MediaMcpError(`Unknown tool: ${name}`, {
         code: 'UNKNOWN_TOOL',

@@ -1,5 +1,6 @@
 import fs from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 export const NAME_PATTERN = /^[a-z0-9]+(?:-[a-z0-9]+)*$/;
 export const SEMVER_PATTERN =
@@ -89,7 +90,6 @@ export function parseCliArguments(argv) {
 export function isMain(importMetaUrl) {
   return (
     process.argv[1] &&
-    path.resolve(process.argv[1]) ===
-      path.resolve(new URL(importMetaUrl).pathname)
+    path.resolve(process.argv[1]) === path.resolve(fileURLToPath(importMetaUrl))
   );
 }

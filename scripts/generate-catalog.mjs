@@ -7,7 +7,6 @@ import { format } from 'prettier';
 
 import {
   directoryNames,
-  formatJson,
   isMain,
   parseCliArguments,
   readJson,
@@ -104,15 +103,19 @@ export async function renderCatalogs(root = repositoryRoot) {
   return { claude, codex, human: await humanCatalog(plugins), plugins };
 }
 
-function expectedFiles(root, rendered) {
+async function formatGeneratedJson(value) {
+  return format(JSON.stringify(value, null, 2), { parser: 'json' });
+}
+
+async function expectedFiles(root, rendered) {
   return [
     {
       path: path.join(root, '.claude-plugin', 'marketplace.json'),
-      content: formatJson(rendered.claude),
+      content: await formatGeneratedJson(rendered.claude),
     },
     {
       path: path.join(root, '.agents', 'plugins', 'marketplace.json'),
-      content: formatJson(rendered.codex),
+      content: await formatGeneratedJson(rendered.codex),
     },
     { path: path.join(root, 'docs', 'catalog.md'), content: rendered.human },
   ];
@@ -120,7 +123,7 @@ function expectedFiles(root, rendered) {
 
 export async function writeCatalogs(root = repositoryRoot) {
   const rendered = await renderCatalogs(root);
-  for (const file of expectedFiles(root, rendered)) {
+  for (const file of await expectedFiles(root, rendered)) {
     await fs.mkdir(path.dirname(file.path), { recursive: true });
     await fs.writeFile(file.path, file.content);
   }
@@ -130,7 +133,7 @@ export async function writeCatalogs(root = repositoryRoot) {
 export async function checkCatalogs(root = repositoryRoot) {
   const rendered = await renderCatalogs(root);
   const errors = [];
-  for (const file of expectedFiles(root, rendered)) {
+  for (const file of await expectedFiles(root, rendered)) {
     let actual;
     try {
       actual = await fs.readFile(file.path, 'utf8');

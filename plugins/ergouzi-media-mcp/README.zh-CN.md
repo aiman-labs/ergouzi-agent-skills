@@ -2,18 +2,18 @@
 
 [English](README.md)
 
-这是一个本地 Codex 插件，将 Ergouzi 异步图片和视频 API 封装为 MCP 工具。Codex 负责
-选择模型和组织模型参数；MCP Server 负责读取本机凭据、调用 HTTP API、查询任务、取消任务、
+这是一个可安装到 Codex 和 Claude Code 的跨平台插件，将 Ergouzi 异步图片和视频 API 封装为 MCP 工具。
+Agent 负责选择模型和组织模型参数；MCP Server 负责读取本机凭据、调用 HTTP API、查询任务、取消任务、
 处理本地媒体文件和下载结果。
 
 ## 开始前
 
 需要满足以下条件：
 
-- Codex 支持本地 Plugin/MCP。
+- Codex 或 Claude Code 支持本地 Plugin/MCP。
 - 已安装 Node.js 22 或更高版本。
-- 已创建一把支持目标图片/视频模型的独立媒体 API Key。它不是 Codex 用来调用 GPT/文本
-  模型的 Key。
+- 已创建一把支持目标图片/视频模型的独立媒体 API Key。它不是宿主 Agent 用来调用
+  GPT/文本模型的 Key。
 
 媒体 API Key 在本机保存，绝不发送到聊天、工具参数、源码或日志中。默认凭据文件是：
 
@@ -32,17 +32,33 @@
 - `ERGOUZI_MEDIA_API_KEY`
 - `ERGOUZI_MEDIA_BASE_URL`
 - `ERGOUZI_CONFIG_FILE`
+- `ERGOUZI_MEDIA_MCP_OUTPUT_DIR`
 
 ## 安装
 
-仓库公开后，先添加 marketplace，再安装插件：
+在 Codex 中先添加 marketplace，再安装插件：
 
 ```bash
 codex plugin marketplace add aiman-labs/ergouzi-agent-skills
 codex plugin add ergouzi-media-mcp@ergouzi-agent-skills
 ```
 
-安装后新建一个 Codex 任务，让工具列表重新加载。插件会通过 `.mcp.json` 启动：
+在 Claude Code 中：
+
+```bash
+claude plugin marketplace add aiman-labs/ergouzi-agent-skills
+claude plugin install ergouzi-media-mcp@ergouzi-agent-skills
+claude mcp list
+```
+
+安装后新建一个 Codex 任务或 Claude Code 会话，让工具列表重新加载。Claude Code 读取 `.mcp.json`，
+由宿主展开插件根目录占位符：
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/server.mjs
+```
+
+Codex 读取 `.codex.mcp.json`，并把工作目录解析为已安装的插件根目录：
 
 ```bash
 node scripts/server.mjs
@@ -82,13 +98,13 @@ node scripts/server.mjs
 调用 get_model_schema 查询 ergouzi/e-image 的输入 Schema。
 ```
 
-通常只需告诉 Codex 目标，它会依次调用：
+通常只需告诉 Agent 目标，它会依次调用：
 
 ```text
 create_prediction -> get_prediction -> download_prediction
 ```
 
-创建计费任务或取消已有任务前，Codex 会要求用户明确确认。
+创建计费任务或取消已有任务前，宿主 Agent 会要求用户明确确认。
 
 ## 图片和视频示例
 
@@ -122,15 +138,23 @@ MCP 只会在已记录的媒体字段中将本地路径传递为 `$local_file`�
 `last_frame_image` 和 `audio`。
 
 工具结果同时包含结构化 MCP 内容和可读 JSON 文本，任务 ID、状态、本地文件路径和回执路径都可
-由 Codex 继续使用。
+由宿主 Agent 继续使用。
 
 ## 结果与故障排查
 
-`download_prediction` 默认下载到 MCP 进程工作目录中的
-`outputs/ergouzi-media-mcp`。建议在提示中明确指定 `output_dir` 或下载目录。结果文件不会
-覆盖已有文件；下载完成后还会写入 `receipts/YYYY-MM-DD/` 回执。
+`download_prediction` 默认下载到宿主的插件数据/状态目录，不会写入只读的插件安装缓存。也可以
+设置 `ERGOUZI_MEDIA_MCP_OUTPUT_DIR` 或在工具参数中明确指定 `output_dir`。结果文件不会覆盖已有
+文件；下载完成后还会写入 `receipts/YYYY-MM-DD/` 回执。每个结果最多 2 GiB，一次工具调用的
+累计下载最多 4 GiB。
 
-- **找不到工具**：确认插件已安装，然后新建一个 Codex 任务。
+维护者发布前可以验证复制后的独立插件：
+
+```bash
+npm run verify:media-mcp-install
+claude plugin validate --strict plugins/ergouzi-media-mcp
+```
+
+- **找不到工具**：确认插件已安装，然后新建一个 Codex 任务或 Claude Code 会话。
 - **401 或 403**：确认配置的是独立媒体 Key，且当前密钥分组支持目标模型。
 - **任务未完成**：保留 `task_` 开头的任务 ID，使用 `get_prediction` 继续查询，不要重复创建。
 - **下载失败**：指定一个可写入的本地目录；外部输出 URL 必须使用 HTTPS。
@@ -144,6 +168,8 @@ Server 使用官方 Model Context Protocol SDK。SDK 及其许可证已经打包
 - Authorization 只发送给配置的 Ergouzi API 域名，不会发送给外部下载地址或跨域重定向。
 - 每个下载域名及其重定向都会先解析 DNS；解析到私网、本机、保留地址或同时返回公网和私网
   地址时会拒绝下载。
+- 某些托管网络会把官方域名映射到 `198.18.0.0/15`。仅当配置的 API 和输出地址都属于
+  `*.ergouzi.life` 官方域名，且解析结果全部落在该范围时才兼容放行；其他域名仍会拒绝。
 - 下载超时为 120 秒，并且在整个流式写入期间持续生效；失败时会删除未完成的临时文件。
 - 本地媒体必须是普通文件，并在转为 data URI 前进行签名检查。
 - `$local_file` 只允许作为已记录媒体字段中的唯一对象值；其他位置出现该字段会在请求发送前报错。

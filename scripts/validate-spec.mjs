@@ -13,7 +13,13 @@ const SKILLS_REF_SOURCE = `git+https://github.com/agentskills/agentskills.git@${
 
 function run(command, args) {
   return new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit' });
+    const child = spawn(command, args, {
+      stdio: 'inherit',
+      env: {
+        ...process.env,
+        ...(process.platform === 'win32' ? { PYTHONUTF8: '1' } : {}),
+      },
+    });
     child.on('error', reject);
     child.on('exit', (code, signal) => {
       if (signal) reject(new Error(`${command} terminated by ${signal}`));

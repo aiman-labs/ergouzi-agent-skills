@@ -2,17 +2,17 @@
 
 [简体中文](README.zh-CN.md)
 
-This Codex plugin exposes the Ergouzi asynchronous image and video API as
-local MCP tools. Codex chooses the model and constructs the model-specific
+This cross-platform plugin exposes the Ergouzi asynchronous image and video API as
+local MCP tools for Codex and Claude Code. The agent chooses the model and constructs the model-specific
 `input`; the MCP server owns credentials, HTTP requests, task polling,
 cancellation, local media conversion, and result downloads.
 
 ## Requirements
 
-- Codex with local plugin/MCP support.
+- Codex or Claude Code with local plugin/MCP support.
 - Node.js 22 or newer.
 - A media API key that is authorized for the target Ergouzi image/video
-  models. This is separate from the GPT/text-model key used by Codex.
+  models. This is separate from the text-model key used by the host agent.
 
 The server reads credentials from the same ignored user config as the media
 Skills:
@@ -32,6 +32,7 @@ The following environment variables override the file:
 - `ERGOUZI_MEDIA_API_KEY`
 - `ERGOUZI_MEDIA_BASE_URL`
 - `ERGOUZI_CONFIG_FILE`
+- `ERGOUZI_MEDIA_MCP_OUTPUT_DIR`
 
 Never put a key in MCP tool arguments, prompts, source files, or logs.
 
@@ -63,7 +64,7 @@ transient failure does not intentionally create a second billable task.
 Ask for explicit user confirmation before creating a billable task or
 cancelling an existing task.
 It returns structured MCP content as well as readable JSON text, so task IDs,
-statuses, saved paths, and receipt paths remain directly usable by Codex.
+statuses, saved paths, and receipt paths remain directly usable by the host agent.
 
 Each local file is limited to 3 MiB, and the complete JSON `input` is limited
 to 4 MiB after local files are expanded as base64 data URIs. One downloaded
@@ -72,7 +73,7 @@ output file is limited to 2 GiB. For `ergouzi/e-video`, local `image`,
 
 ## First run
 
-Start a new Codex task after the plugin is installed, then ask:
+Start a new Codex task or Claude Code session after the plugin is installed, then ask:
 
 ```text
 Call ergouzi-media-mcp check_configuration and show the configuration result without exposing my API key.
@@ -92,12 +93,19 @@ Use ergouzi/e-image to create a rainy Shanghai street at night, then download th
 
 For local image, video, or audio input, provide an absolute path or a
 `~/...` home-relative path in the
-request to Codex. It passes the path only through the documented
+request to the host agent. It passes the path only through the documented
 `$local_file` media fields, rather than treating arbitrary JSON fields as files.
 
 ## Installation and startup
 
-The plugin manifest and `.mcp.json` start the isolated server with:
+Claude Code reads `.mcp.json` and expands the plugin root placeholder:
+
+```bash
+node ${CLAUDE_PLUGIN_ROOT}/scripts/server.mjs
+```
+
+Codex reads `.codex.mcp.json` and resolves its working directory to the
+installed plugin root:
 
 ```bash
 node scripts/server.mjs
@@ -113,13 +121,30 @@ codex plugin marketplace add aiman-labs/ergouzi-agent-skills
 codex plugin add ergouzi-media-mcp@ergouzi-agent-skills
 ```
 
-After installation, start a new Codex task so the MCP tool list is refreshed.
+For Claude Code:
+
+```bash
+claude plugin marketplace add aiman-labs/ergouzi-agent-skills
+claude plugin install ergouzi-media-mcp@ergouzi-agent-skills
+claude mcp list
+```
+
+After installation, start a new Codex task or Claude Code session so the MCP
+tool list is refreshed.
 
 By default, `download_prediction` writes to
-`outputs/ergouzi-media-mcp` under the MCP process working directory. Pass an
-explicit `output_dir` when a different local directory is required. Existing
-files are never overwritten; each download is written through a temporary
-file and then atomically renamed.
+the host's plugin data/state directory, outside the installed plugin cache.
+Set `ERGOUZI_MEDIA_MCP_OUTPUT_DIR` or pass an explicit `output_dir` when a
+different local directory is required. Existing files are never overwritten;
+each download is written through a temporary file and then atomically renamed.
+Each output is limited to 2 GiB and one tool call is limited to 4 GiB total.
+
+Maintainers can verify a copied, dependency-free plugin before publishing:
+
+```bash
+npm run verify:media-mcp-install
+claude plugin validate --strict plugins/ergouzi-media-mcp
+```
 
 ## Security boundary
 
@@ -130,6 +155,9 @@ file and then atomically renamed.
   URL itself is a loopback test endpoint.
 - Every output hostname is resolved before download and after each redirect;
   private, local, reserved, and mixed public/private DNS answers are rejected.
+- The managed `198.18.0.0/15` DNS-mapping range is accepted only for
+  first-party `*.ergouzi.life` output hosts when the configured API is also
+  first-party; the same mapping is still rejected for every other hostname.
 - The 120-second download timeout remains active while response bytes are
   streamed to disk, and partial files are removed on failure.
 - Local media paths, including `~/...` home-relative paths, must resolve to regular files and are signature-checked

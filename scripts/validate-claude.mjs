@@ -29,7 +29,17 @@ export async function validateClaude(root = repositoryRoot) {
   }
 
   return new Promise((resolve, reject) => {
-    const executable = path.join(root, 'node_modules', '.bin', 'claude');
+    const executable =
+      process.platform === 'win32'
+        ? path.join(
+            root,
+            'node_modules',
+            '@anthropic-ai',
+            'claude-code',
+            'bin',
+            'claude.exe',
+          )
+        : path.join(root, 'node_modules', '.bin', 'claude');
     const child = spawn(executable, ['plugin', 'validate', '--strict', root], {
       cwd: root,
       stdio: 'inherit',

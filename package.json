@@ -12,6 +12,7 @@
     "create:plugin": "node scripts/create-plugin.mjs",
     "build:media-mcp": "node scripts/build-media-mcp.mjs",
     "build:media-mcp:check": "node scripts/build-media-mcp.mjs --check",
+    "verify:media-mcp-install": "node scripts/media-mcp/validate-install.mjs",
     "smoke:media-mcp": "node scripts/media-mcp/smoke.mjs",
     "catalog": "node scripts/generate-catalog.mjs",
     "catalog:check": "node scripts/generate-catalog.mjs --check",

@@ -232,24 +232,26 @@ async function validateCodexComponents(pluginRoot, manifest, errors) {
     errors.push('Codex manifest skills must resolve to ./skills/.');
   }
   if (typeof manifest.mcpServers === 'string') {
-    if (normalizeArchivePath(manifest.mcpServers) !== './.mcp.json') {
-      errors.push(
-        'Codex manifest mcpServers path must resolve to ./.mcp.json.',
+    const normalized = normalizeArchivePath(manifest.mcpServers);
+    if (normalized === null) {
+      errors.push('Codex manifest mcpServers path contains traversal.');
+    } else {
+      const payload = await validateCompanionJson(
+        pluginRoot,
+        normalized,
+        errors,
       );
-    }
-    const payload = await validateCompanionJson(
-      pluginRoot,
-      '.mcp.json',
-      errors,
-    );
-    if (payload) {
-      const extra = Object.keys(payload).filter((key) => key !== 'mcpServers');
-      if (extra.length > 0) {
-        errors.push(
-          `.mcp.json contains unsupported fields: ${extra.join(', ')}.`,
+      if (payload) {
+        const extra = Object.keys(payload).filter(
+          (key) => key !== 'mcpServers',
         );
+        if (extra.length > 0) {
+          errors.push(
+            `${normalized} contains unsupported fields: ${extra.join(', ')}.`,
+          );
+        }
+        validateMcpServers(payload.mcpServers, normalized, errors);
       }
-      validateMcpServers(payload.mcpServers, '.mcp.json', errors);
     }
   } else if (manifest.mcpServers !== undefined) {
     validateMcpServers(manifest.mcpServers, 'Codex manifest', errors);

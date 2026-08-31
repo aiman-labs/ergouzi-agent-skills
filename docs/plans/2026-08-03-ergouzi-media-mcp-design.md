@@ -1,11 +1,13 @@
 # Ergouzi Media MCP Design
 
-Status: Implemented; production-hardening in progress
+Status: Production-installable local MCP (Codex and Claude Code)
 
 ## Decision
 
 Run the MCP server locally as a child process of Codex or Claude Code, using
 MCP over stdio. The local MCP calls the remote New API at `ergouzi.life`.
+Keep the implementation platform-neutral and provide thin host manifests for
+installation and approval behavior.
 
 Do not deploy the MCP server to the Ergouzi application server for the initial
 version. A remote MCP cannot directly read user-selected local media or save
@@ -64,11 +66,19 @@ The ten models share these tools. Model-specific fields stay in the generic
 
 ## Packaging
 
-Keep the current portable Skills usable on their own. Add the MCP later as a
-self-contained optional plugin in this repository. When the MCP tools are
-available, the Skills should prefer them; otherwise their existing Python
-scripts remain the fallback. This avoids making portable Skill installation
-depend on a separately hosted service.
+Keep the current portable Skills usable on their own. The MCP is a
+self-contained cross-platform plugin in this repository. Codex and Claude Code
+use their own manifests and host-specific MCP companion files while sharing
+the bundled server.
+When the MCP tools are available, the Skills may prefer them; otherwise their
+existing Python scripts remain the fallback. This avoids making portable Skill
+installation depend on a separately hosted service.
+
+The bundled server is dependency-free after build. `npm run
+verify:media-mcp-install` copies the package contract into a disposable startup
+check, verifies both manifests and MCP configuration paths, and completes an
+MCP initialize/tools-list handshake. The check runs in CI together with
+repository and Claude Code validation.
 
 ## Deferred Remote Mode
 

@@ -27,6 +27,8 @@ jobs:
         run: npm ci
       - name: Run repository checks
         run: npm run check
+      - name: Verify bundled MCP installation
+        run: npm run verify:media-mcp-install
       - name: Validate Claude Code artifacts
         run: npm run validate:claude
 

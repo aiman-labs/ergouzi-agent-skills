@@ -41,7 +41,8 @@ plugins/example-plugin/
 ├── hooks/                          # Platform hooks when supported
 ├── scripts/                        # Runtime helpers
 ├── assets/                         # Icons and output resources
-├── .mcp.json                       # MCP servers when required
+├── .mcp.json                       # Claude Code MCP servers when required
+├── .codex.mcp.json                 # Codex MCP servers when host semantics differ
 └── .app.json                       # Codex app metadata when required
 ```
 
@@ -79,5 +80,8 @@ claude plugin validate --strict .
 ```
 
 For Codex, run repository schema validation and perform a local marketplace
-install in a disposable environment before release. Start a new agent session
-after reinstall so updated plugin components are loaded.
+install in a disposable environment before release. For cross-platform MCPs,
+execute each host's declared command from a copied plugin and complete an MCP
+`initialize`/`tools/list` handshake; do not assume one host's variable
+expansion works on the other. Start a new agent session after reinstall so
+updated plugin components are loaded.

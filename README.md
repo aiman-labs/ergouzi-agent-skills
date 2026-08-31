@@ -60,20 +60,26 @@ before enabling them.
 
 ## Ergouzi Media MCP Quick Start
 
-`ergouzi-media-mcp` is a local Codex plugin that exposes the Ergouzi
+`ergouzi-media-mcp` is a cross-platform Codex and Claude Code plugin that exposes the Ergouzi
 asynchronous image and video API as tools for configuration diagnostics, model
 listing and schema discovery, task creation, task status, cancellation, and
 result download.
 
-1. Install it through the Codex marketplace commands above:
+1. Install it through the Codex marketplace commands above, or use the Claude
+   Code commands below:
 
    ```bash
    codex plugin add ergouzi-media-mcp@ergouzi-agent-skills
    ```
 
+   ```bash
+   claude plugin marketplace add aiman-labs/ergouzi-agent-skills
+   claude plugin install ergouzi-media-mcp@ergouzi-agent-skills
+   ```
+
 2. Install Node.js 22 or newer and configure a separate media API key. This
    key must be authorized for the intended image/video models; it is not the
-   GPT/text-model key used by Codex. Save it locally at
+   text-model key used by the host agent. Save it locally at
    `~/.config/ergouzi/credentials.json` on macOS/Linux or
    `%APPDATA%\\ergouzi\\credentials.json` on Windows:
 
@@ -84,19 +90,19 @@ result download.
    }
    ```
 
-3. Start a new Codex task and verify the connection:
+3. Start a new Codex task or Claude Code session and verify the connection:
 
    ```text
    Call ergouzi-media-mcp check_configuration and show the configuration result without exposing my media API key.
    ```
 
-4. Ask Codex to create and download media with an explicit destination:
+4. Ask the agent to create and download media with an explicit destination:
 
    ```text
    Use ergouzi/e-image to create a rainy Shanghai street at night, then download the completed result to ~/outputs.
    ```
 
-The MCP handles task submission, polling, and download. Codex chooses the
+The MCP handles task submission, polling, and download. Codex and Claude Code choose the
 model and model input. Read the [full plugin guide](plugins/ergouzi-media-mcp/README.md)
 for local file inputs, tool details, output behavior, and troubleshooting.
 

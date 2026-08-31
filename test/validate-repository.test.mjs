@@ -13,6 +13,22 @@ async function withRepository(run) {
   return run(root);
 }
 
+async function createSymlinkForTest(t, target, linkPath) {
+  try {
+    await fs.symlink(target, linkPath);
+    return true;
+  } catch (error) {
+    if (
+      process.platform === 'win32' &&
+      ['EACCES', 'EPERM'].includes(error.code)
+    ) {
+      t.skip(`Windows symlink privileges unavailable (${error.code})`);
+      return false;
+    }
+    throw error;
+  }
+}
+
 test('an empty repository is valid', async () => {
   await withRepository(async (root) => {
     const result = await validateRepository(root, { checkCatalogs: false });
@@ -103,25 +119,39 @@ test('plugin runtime files cannot traverse outside the plugin', async () => {
   });
 });
 
-test('plugins cannot use symlinks as hidden external dependencies', async () => {
+test('plugins cannot use symlinks as hidden external dependencies', async (t) => {
   await withRepository(async (root) => {
     const pluginRoot = await writePlugin(root, 'linked-plugin', {
       claude: true,
     });
     const external = path.join(root, 'shared-runtime.mjs');
     await fs.writeFile(external, 'export const value = true;\n');
-    await fs.symlink(external, path.join(pluginRoot, 'runtime.mjs'));
+    if (
+      !(await createSymlinkForTest(
+        t,
+        external,
+        path.join(pluginRoot, 'runtime.mjs'),
+      ))
+    )
+      return;
     const result = await validateRepository(root, { checkCatalogs: false });
     assert.match(result.errors.join('\n'), /must not contain symlinks/i);
   });
 });
 
-test('portable Skills cannot use symlinks as hidden external dependencies', async () => {
+test('portable Skills cannot use symlinks as hidden external dependencies', async (t) => {
   await withRepository(async (root) => {
     const skillRoot = await writeSkill(root, 'linked-skill');
     const external = path.join(root, 'private-reference.md');
     await fs.writeFile(external, '# Private reference\n');
-    await fs.symlink(external, path.join(skillRoot, 'reference.md'));
+    if (
+      !(await createSymlinkForTest(
+        t,
+        external,
+        path.join(skillRoot, 'reference.md'),
+      ))
+    )
+      return;
     const result = await validateRepository(root, { checkCatalogs: false });
     assert.match(
       result.errors.join('\n'),
@@ -130,12 +160,19 @@ test('portable Skills cannot use symlinks as hidden external dependencies', asyn
   });
 });
 
-test('the portable Skills collection cannot contain symlinked directories', async () => {
+test('the portable Skills collection cannot contain symlinked directories', async (t) => {
   await withRepository(async (root) => {
     const externalRoot = path.join(root, 'external-skill');
     await fs.mkdir(externalRoot);
     await fs.writeFile(path.join(externalRoot, 'SKILL.md'), '# Hidden Skill\n');
-    await fs.symlink(externalRoot, path.join(root, 'skills', 'hidden-skill'));
+    if (
+      !(await createSymlinkForTest(
+        t,
+        externalRoot,
+        path.join(root, 'skills', 'hidden-skill'),
+      ))
+    )
+      return;
     const result = await validateRepository(root, { checkCatalogs: false });
     assert.match(
       result.errors.join('\n'),
@@ -200,6 +237,26 @@ test('Codex plugin MCP companion manifests must be valid', async () => {
     await fs.writeFile(path.join(pluginRoot, '.mcp.json'), '{"wrong":{}}\n');
     const result = await validateRepository(root, { checkCatalogs: false });
     assert.match(result.errors.join('\n'), /\.mcp\.json.*mcpServers/i);
+  });
+});
+
+test('Codex plugin MCP companions may use a safe relative filename', async () => {
+  await withRepository(async (root) => {
+    const pluginRoot = await writePlugin(root, 'custom-mcp-plugin', {
+      codex: true,
+    });
+    const manifestPath = path.join(pluginRoot, '.codex-plugin', 'plugin.json');
+    const manifest = JSON.parse(await fs.readFile(manifestPath, 'utf8'));
+    manifest.mcpServers = './.codex.mcp.json';
+    await fs.writeFile(manifestPath, `${JSON.stringify(manifest, null, 2)}\n`);
+    await fs.writeFile(
+      path.join(pluginRoot, '.codex.mcp.json'),
+      JSON.stringify({
+        mcpServers: { primary: { command: 'node', args: [] } },
+      }),
+    );
+    const result = await validateRepository(root, { checkCatalogs: false });
+    assert.deepEqual(result.errors, []);
   });
 });
 
