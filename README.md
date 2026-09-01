@@ -22,7 +22,7 @@ publish private Ergouzi operations Skills.
 Available portable Skills:
 
 - `ergouzi-image-gen` submits and manages Ergouzi image generation, editing,
-  virtual try-on, and upscaling tasks.
+  virtual try-on, upscaling, and background-removal tasks.
 - `ergouzi-video-gen` submits and manages Ergouzi video generation, animation,
   avatar, and person-replacement tasks.
 

@@ -68,6 +68,12 @@ const MODEL_SCHEMA_CACHES = new WeakMap();
 const TRANSIENT_SUBMISSION_STATUSES = new Set([
   408, 409, 425, 429, 500, 502, 503, 504,
 ]);
+const VERSION_PREDICTION_IDS = new Map([
+  [
+    'ergouzi/e-rmbg',
+    'a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc',
+  ],
+]);
 const OUTPUT_MEDIA_TYPES = new Set([
   'image/avif',
   'image/jpeg',
@@ -746,17 +752,19 @@ export async function createPrediction(
     );
   const encodedInput = await resolveMediaInputs(model, input);
   const [owner, name] = model.split('/');
-  const requestPath = `/customer/v1/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/predictions`;
+  const version = VERSION_PREDICTION_IDS.get(model);
+  const requestPath = version
+    ? '/customer/v1/predictions'
+    : `/customer/v1/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/predictions`;
+  const requestBody = version
+    ? { version, input: encodedInput }
+    : { input: encodedInput };
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      return await apiJson(
-        credentials,
-        'POST',
-        requestPath,
-        { input: encodedInput },
-        { headers: { 'Idempotency-Key': idempotencyKey } },
-      );
+      return await apiJson(credentials, 'POST', requestPath, requestBody, {
+        headers: { 'Idempotency-Key': idempotencyKey },
+      });
     } catch (error) {
       lastError = error;
       if (attempt === 1 || !retryable(error)) throw error;

@@ -1,10 +1,9 @@
 ---
 name: ergouzi-image-gen
-description: 'Submit and complete Ergouzi image generation, editing, virtual try-on, and upscaling tasks through ergouzi.life, including tasks that use local image files or HTTPS URLs. Use when Codex must call an ergouzi/e-image* model, poll the asynchronous task, download its outputs, resume a task ID, or cancel an image task.'
+description: 'Submit and complete Ergouzi image generation, editing, virtual try-on, upscaling, and background-removal tasks through ergouzi.life, including tasks that use local image files or HTTPS URLs. Use when Codex must call an ergouzi/e-image* or ergouzi/e-rmbg model, poll the asynchronous task, download its outputs, resume a task ID, or cancel an image task.'
 license: MIT
-compatibility: 'Requires Python 3.10+ and network access to https://ergouzi.life.'
 metadata:
-  version: '0.3.1'
+  version: '0.3.2'
   author: aiman-labs
 ---
 
@@ -37,22 +36,27 @@ file conversion, request submission, task polling, and result download.
 ## Workflow
 
 1. Submit a paid prediction only when the user explicitly asks to generate,
-   edit, try on, or upscale an image.
-2. Honor an explicit model choice. Otherwise let Codex select one of the five
+   edit, try on, upscale, or remove the background of an image.
+2. Honor an explicit model choice. Otherwise let Codex select one of the six
    models from the task's required input/output capability; do not hide models
    or apply server-routing policy.
 3. Read `references/model-reference.md` for the selected model's objective API
-   contract. Use `--prompt` only when that model exposes a `prompt` field. Use
+   contract. Use `--prompt` only when that model exposes a `prompt` field; use
+   the `e-rmbg` options from its input JSON example rather than `--prompt`. Use
    `--input-file`, `--input-json`, or stdin for the complete model `input`
    object, without the outer `{ "input": ... }` envelope. Convenience arguments
    override the corresponding JSON fields. The runner resolves `$local_file`
    objects before submission and otherwise leaves input values unchanged. Prefer
    a UTF-8 JSON file for structured input across operating systems; files and
-   stdin may include a UTF-8 BOM.
+   stdin may include a UTF-8 BOM. The runner submits `e-rmbg` through its fixed
+   deployment version endpoint; callers still select it by the public model name
+   and must not add a `version` field to the model input.
 4. Prefer the MCP tools when available. Otherwise run `scripts/run.py predict`.
    Both paths create one logical task, reuse the same idempotency key for
    bounded transport retries, record the `task_*` ID, poll to a terminal state,
-   and download successful outputs.
+   and download successful outputs. If a submission is interrupted before the
+   task ID is returned, retry the exact request with the printed
+   `--idempotency-key`; do not start a new paid request with a new key.
 5. Report the model, task ID, terminal status, and absolute saved paths.
 6. If execution was interrupted or timed out, resume with
    `status --wait --download`. Do not create a replacement task unless the user
@@ -67,6 +71,8 @@ python scripts/run.py predict --model ergouzi/e-image --prompt "<prompt>"
 python scripts/run.py predict --model ergouzi/e-image-edit --prompt "<prompt>" --image <path-or-url>
 python scripts/run.py predict --model ergouzi/e-image-try-on --person-image <path-or-url> --garment-image <path-or-url>
 python scripts/run.py predict --model ergouzi/e-image-edit --input-file <input.json> --output <result.png>
+python scripts/run.py predict --model ergouzi/e-rmbg --image <path-or-url> --input-json '{"background_type":"rgba","format":"png","reverse":false,"threshold":0}' --output <result.png>
+python scripts/run.py predict --model ergouzi/e-image --prompt "<prompt>" --idempotency-key <stable-key>
 python scripts/run.py status --task-id <task_id> --wait --download --output <result.png>
 python scripts/run.py cancel --task-id <task_id>
 ```
@@ -107,5 +113,7 @@ Use `--output` for an exact `.jpg`, `.jpeg`, `.png`, or `.webp` path, or
   remains responsible for model validation and generation.
 - Do not pass upstream provider tokens such as `hf_api_token`.
 - Do not send the Ergouzi Authorization header to external output URLs.
+- Treat task submission and cancellation as external side effects; perform them
+  only after the user explicitly requests the action.
 - Treat `references/ai-guide.md` as optional advice. Read it only when the user
   asks for model-selection or prompting advice; it never overrides user input.

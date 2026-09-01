@@ -15540,7 +15540,7 @@ var MP4_BRANDS = /* @__PURE__ */ new Set([
   "mmp4",
   "msdh"
 ]);
-var MEDIA_MCP_VERSION = true ? "0.2.2" : "0.2.0-dev";
+var MEDIA_MCP_VERSION = true ? "0.2.3" : "0.2.0-dev";
 var MODEL_SCHEMA_CACHE_TTL_MS = 5 * 60 * 1e3;
 var MAX_API_ERROR_DETAIL_CHARS = 4096;
 var MODEL_SCHEMA_CACHES = /* @__PURE__ */ new WeakMap();
@@ -15553,6 +15553,12 @@ var TRANSIENT_SUBMISSION_STATUSES = /* @__PURE__ */ new Set([
   502,
   503,
   504
+]);
+var VERSION_PREDICTION_IDS = /* @__PURE__ */ new Map([
+  [
+    "ergouzi/e-rmbg",
+    "a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc"
+  ]
 ]);
 var OUTPUT_MEDIA_TYPES = /* @__PURE__ */ new Set([
   "image/avif",
@@ -16114,17 +16120,15 @@ async function createPrediction(credentials, model, input, idempotencyKey = rand
     );
   const encodedInput = await resolveMediaInputs(model, input);
   const [owner, name] = model.split("/");
-  const requestPath = `/customer/v1/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/predictions`;
+  const version2 = VERSION_PREDICTION_IDS.get(model);
+  const requestPath = version2 ? "/customer/v1/predictions" : `/customer/v1/models/${encodeURIComponent(owner)}/${encodeURIComponent(name)}/predictions`;
+  const requestBody = version2 ? { version: version2, input: encodedInput } : { input: encodedInput };
   let lastError;
   for (let attempt = 0; attempt < 2; attempt += 1) {
     try {
-      return await apiJson(
-        credentials,
-        "POST",
-        requestPath,
-        { input: encodedInput },
-        { headers: { "Idempotency-Key": idempotencyKey } }
-      );
+      return await apiJson(credentials, "POST", requestPath, requestBody, {
+        headers: { "Idempotency-Key": idempotencyKey }
+      });
     } catch (error2) {
       lastError = error2;
       if (attempt === 1 || !retryable(error2)) throw error2;
@@ -17140,7 +17144,7 @@ async function callTool(name, args = {}, credentials) {
 // scripts/media-mcp/server-entry.mjs
 var SERVER_INFO = {
   name: "ergouzi-media-mcp",
-  version: "0.2.2"
+  version: "0.2.3"
 };
 var server = new Server(SERVER_INFO, {
   capabilities: { tools: { listChanged: false } },

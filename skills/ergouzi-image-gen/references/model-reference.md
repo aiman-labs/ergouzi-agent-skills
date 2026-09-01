@@ -1,10 +1,10 @@
 # Image Model Reference
 
-This is the objective request contract verified from the live model schemas on
-2026-08-02. The server remains the source of truth and returns validation errors
-for unsupported fields.
+This is the objective request contract verified from the live model schema in
+the local New API database on 2026-08-10. The server remains the source of truth
+and returns validation errors for unsupported fields.
 
-All models use:
+Most models use:
 
 ```text
 POST /customer/v1/models/{owner}/{model}/predictions
@@ -14,10 +14,23 @@ Content-Type: application/json
 {"input": { ...model fields... }}
 ```
 
+`ergouzi/e-rmbg` is a version-pinned community deployment and instead uses:
+
+```text
+POST /customer/v1/predictions
+Authorization: Bearer <Ergouzi API key>
+Content-Type: application/json
+
+{"version":"a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc","input":{...model fields...}}
+```
+
+The runner injects this immutable deployment version. Callers continue to use
+the public `ergouzi/e-rmbg` model name and provide only the model input.
+
 The Skill accepts documented media fields as HTTPS URLs, supported base64 data
 URIs, or local `$local_file` objects. It validates local file signatures before
 converting them to data URIs. The final JSON request must remain within 4 MiB;
-use HTTPS URLs for larger media. All five models return one image URI;
+use HTTPS URLs for larger media. All six models return one image output URI;
 successful downloads must be JPEG, PNG, or WebP.
 
 ## `ergouzi/e-image`
@@ -50,6 +63,37 @@ Required by schema: `prompt`. For an actual edit, also provide `images`.
 - `seed`: optional integer.
 - `disable_safety_checker`: default `false`.
 - `no_op`: internal health-check field; do not use for normal tasks.
+
+## `ergouzi/e-rmbg`
+
+Required: `image`. This model does not use a prompt. The following is the
+working example shown by the API documentation:
+
+```json
+{
+  "background_type": "rgba",
+  "format": "png",
+  "image": "https://example.com/input",
+  "reverse": false,
+  "threshold": 0
+}
+```
+
+- `image`: JPEG, PNG, or WebP URI. Use `--image` for a local path or HTTPS URL.
+- `background_type`: default `rgba`; the live description lists `rgba`, `map`,
+  `green`, `white`, an `[R,G,B]` color array, `blur`, `overlay`, or a path to
+  an image. The schema declares this field as a string, so pass the exact form
+  accepted by the server for non-`rgba` values.
+- `format`: default `png`; the live description gives `png` and `jpg` as
+  examples rather than a closed enum.
+- `reverse`: default `false`; when `true`, remove the foreground instead of
+  the background.
+- `threshold`: default `0`, a number in `0.0..1.0`; `0.0` uses soft alpha,
+  while a positive value enables hard segmentation.
+
+The required `image` plus the example defaults are sufficient for a basic
+background-removal request. The API remains the source of truth if the model
+deployment adds or changes accepted values.
 
 ## `ergouzi/e-image-ideogram`
 

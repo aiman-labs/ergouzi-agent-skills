@@ -4,7 +4,9 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 import re
 import sys
 import time
@@ -30,11 +32,13 @@ ALLOWED_MODELS = {
     "ergouzi/e-video-avatar",
     "ergouzi/e-video-replace",
 }
+TASK_ID_PATTERN = re.compile(r"^task_[A-Za-z0-9_-]+$")
 PROMPT_MODELS = {"ergouzi/e-video"}
 DEFAULT_OUTPUT_DIR = "output/ergouzi-video-gen"
 TERMINAL_STATUSES = {"succeeded", "failed", "canceled", "unknown"}
 TRANSIENT_STATUS_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
 MAX_INPUT_BYTES = 4 * 1024 * 1024
+IDEMPOTENCY_KEY_PATTERN = re.compile(r"^[A-Za-z0-9._:-]{1,128}$")
 
 
 class PredictionTimeout(ClientError):
@@ -52,6 +56,12 @@ def _model_path(model: str) -> str:
         raise ClientError(f"Unsupported video model: {model}")
     owner, name = model.split("/", 1)
     return f"/customer/v1/models/{quote(owner, safe='')}/{quote(name, safe='')}/predictions"
+
+
+def _validate_task_id(task_id: str) -> str:
+    if not TASK_ID_PATTERN.fullmatch(task_id):
+        raise ClientError("task_id must be a task_ identifier")
+    return task_id
 
 
 def _media_argument(value: str) -> Any:
@@ -103,7 +113,7 @@ def _read_input(args: argparse.Namespace) -> dict[str, Any]:
         (args.last_frame_image, "last_frame_image"),
     ):
         if argument:
-            if field not in MODEL_MEDIA_FIELDS[args.model]:
+            if field not in MODEL_MEDIA_FIELDS.get(args.model, {}):
                 raise ClientError(f"--{field.replace('_', '-')} is not valid for {args.model}")
             value[field] = _media_argument(argument)
     value = resolve_media_inputs(args.model, value)
@@ -135,26 +145,108 @@ def _write_receipt(
     model: str,
     status: str,
     files: list[Path] | None = None,
+    idempotency_key: str | None = None,
 ) -> Path:
     output_dir.mkdir(parents=True, exist_ok=True)
     path = _receipt_path(output_dir, task_id)
+    if idempotency_key is None and path.exists():
+        try:
+            previous = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            previous = {}
+        if isinstance(previous, dict) and isinstance(previous.get("idempotency_key"), str):
+            idempotency_key = previous["idempotency_key"]
+    receipt = {
+        "task_id": task_id,
+        "model": model,
+        "status": status,
+        "files": [str(item) for item in files or []],
+    }
+    if idempotency_key:
+        receipt["idempotency_key"] = idempotency_key
     temporary = path.with_suffix(".json.tmp")
-    temporary.write_text(
-        json.dumps(
-            {
-                "task_id": task_id,
-                "model": model,
-                "status": status,
-                "files": [str(item) for item in files or []],
-            },
-            ensure_ascii=False,
-            indent=2,
-        )
-        + "\n",
-        encoding="utf-8",
-    )
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(receipt, handle, ensure_ascii=False, indent=2)
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
     temporary.replace(path)
     return path.resolve()
+
+
+def _input_fingerprint(model_input: dict[str, Any]) -> str:
+    encoded = json.dumps(
+        model_input, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    ).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()
+
+
+def _validate_idempotency_key(value: str) -> str:
+    if not IDEMPOTENCY_KEY_PATTERN.fullmatch(value):
+        raise ClientError(
+            "idempotency key must be 1-128 ASCII letters, digits, ., _, :, or -"
+        )
+    return value
+
+
+def _pending_path(output_dir: Path, idempotency_key: str) -> Path:
+    digest = hashlib.sha256(idempotency_key.encode("ascii")).hexdigest()
+    return output_dir / f".pending-{digest}.json"
+
+
+def _find_pending(output_dir: Path, model: str, fingerprint: str) -> dict[str, str] | None:
+    for path in output_dir.glob(".pending-*.json"):
+        try:
+            pending = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError):
+            continue
+        if (
+            isinstance(pending, dict)
+            and pending.get("model") == model
+            and pending.get("input_sha256") == fingerprint
+            and isinstance(pending.get("idempotency_key"), str)
+        ):
+            return pending
+    return None
+
+
+def _write_pending(
+    output_dir: Path, model: str, idempotency_key: str, fingerprint: str
+) -> Path:
+    output_dir.mkdir(parents=True, exist_ok=True)
+    path = _pending_path(output_dir, idempotency_key)
+    if path.exists():
+        try:
+            pending = json.loads(path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise ClientError(f"Pending submission record is invalid: {path}") from error
+        if not (
+            isinstance(pending, dict)
+            and pending.get("model") == model
+            and pending.get("input_sha256") == fingerprint
+        ):
+            raise ClientError("Idempotency key is already associated with another submission")
+        return path
+    temporary = path.with_suffix(".json.tmp")
+    with temporary.open("w", encoding="utf-8") as handle:
+        json.dump(
+            {
+                "model": model,
+                "idempotency_key": idempotency_key,
+                "input_sha256": fingerprint,
+            },
+            handle,
+            indent=2,
+        )
+        handle.write("\n")
+        handle.flush()
+        os.fsync(handle.fileno())
+    temporary.replace(path)
+    return path
+
+
+def _remove_pending(output_dir: Path, idempotency_key: str) -> None:
+    _pending_path(output_dir, idempotency_key).unlink(missing_ok=True)
 
 
 def _task_status(payload: dict[str, Any]) -> str:
@@ -162,6 +254,7 @@ def _task_status(payload: dict[str, Any]) -> str:
 
 
 def _fetch(task_id: str) -> dict[str, Any]:
+    task_id = _validate_task_id(task_id)
     credentials = load_credentials()
     payload, _ = api_json(
         credentials,
@@ -256,13 +349,33 @@ def _complete(
 def _predict(args: argparse.Namespace) -> int:
     output_path = _output_path(args.output)
     model_input = _read_input(args)
-    idempotency_key = f"ergouzi-skill-{uuid.uuid4()}"
-    payload = _submit(args.model, model_input, idempotency_key)
-    task_id = str(payload.get("id", ""))
-    if not task_id.startswith("task_"):
-        raise ClientError("Prediction response does not contain a local task_* ID")
     output_dir = output_path.parent if output_path else Path(args.output_dir).expanduser().resolve()
-    receipt = _write_receipt(output_dir, task_id, args.model, _task_status(payload))
+    fingerprint = _input_fingerprint(model_input)
+    if args.idempotency_key is not None:
+        idempotency_key = _validate_idempotency_key(args.idempotency_key)
+    else:
+        pending = _find_pending(output_dir, args.model, fingerprint)
+        if pending:
+            raise ClientError(
+                "An unresolved submission already exists; retry with "
+                f"--idempotency-key {pending['idempotency_key']}"
+            )
+        idempotency_key = f"ergouzi-skill-{uuid.uuid4()}"
+    pending_path = _write_pending(output_dir, args.model, idempotency_key, fingerprint)
+    print(f"Idempotency key: {idempotency_key}; pending record: {pending_path}", file=sys.stderr)
+    try:
+        payload = _submit(args.model, model_input, idempotency_key)
+    except ClientError as error:
+        if not isinstance(error, ApiError) or (
+            error.status is not None and error.status not in TRANSIENT_STATUS_CODES
+        ):
+            _remove_pending(output_dir, idempotency_key)
+        raise
+    task_id = _validate_task_id(str(payload.get("id", "")))
+    receipt = _write_receipt(
+        output_dir, task_id, args.model, _task_status(payload), idempotency_key=idempotency_key
+    )
+    _remove_pending(output_dir, idempotency_key)
     print(f"Task created: {task_id}; receipt: {receipt}", file=sys.stderr)
     if args.no_wait:
         _print_json(
@@ -294,15 +407,16 @@ def _status(args: argparse.Namespace) -> int:
 
 
 def _cancel(args: argparse.Namespace) -> int:
+    task_id = _validate_task_id(args.task_id)
     credentials = load_credentials()
     payload, _ = api_json(
         credentials,
         "POST",
-        f"/customer/v1/predictions/{quote(args.task_id, safe='')}/cancel",
+        f"/customer/v1/predictions/{quote(task_id, safe='')}/cancel",
     )
     _print_json(
         {
-            "task_id": str(payload.get("id", args.task_id)),
+            "task_id": str(payload.get("id", task_id)),
             "model": str(payload.get("model", "")),
             "status": _task_status(payload),
         }
@@ -332,6 +446,7 @@ def parse_args() -> argparse.Namespace:
     predict.add_argument("--poll-interval", type=float, default=2.0)
     predict.add_argument("--no-wait", action="store_true")
     predict.add_argument("--no-download", action="store_true")
+    predict.add_argument("--idempotency-key", help="Stable key to safely retry one submission")
     predict.set_defaults(handler=_predict)
 
     status = subparsers.add_parser("status", help="Read or resume a task")

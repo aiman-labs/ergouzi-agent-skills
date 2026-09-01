@@ -14,6 +14,7 @@ from client import ClientError
 
 
 LOCAL_FILE_KEY = "$local_file"
+FORBIDDEN_INPUT_FIELDS = frozenset({"hf_api_token"})
 MAX_EXPANDED_INPUT_BYTES = 4 * 1024 * 1024
 MAX_LOCAL_MEDIA_BYTES = 3 * 1024 * 1024
 IMAGE_TYPES = frozenset({"image/jpeg", "image/png", "image/webp"})
@@ -99,7 +100,10 @@ class MediaResolver:
 def resolve_media_inputs(
     model: str, model_input: dict[str, Any]
 ) -> dict[str, Any]:
-    fields = MODEL_MEDIA_FIELDS[model]
+    forbidden = find_forbidden_input_field(model_input)
+    if forbidden:
+        raise ClientError(f"{forbidden} is not accepted; use the configured Ergouzi API key")
+    fields = MODEL_MEDIA_FIELDS.get(model, {})
     resolved = dict(model_input)
     resolver = MediaResolver()
     for name, field in fields.items():
@@ -113,6 +117,22 @@ def resolve_media_inputs(
             "Expanded input exceeds the 4 MiB API request limit; use HTTPS URLs for media"
         )
     return resolved
+
+
+def find_forbidden_input_field(value: Any) -> str | None:
+    if isinstance(value, dict):
+        for key, item in value.items():
+            if key in FORBIDDEN_INPUT_FIELDS:
+                return key
+            found = find_forbidden_input_field(item)
+            if found:
+                return found
+    elif isinstance(value, list):
+        for item in value:
+            found = find_forbidden_input_field(item)
+            if found:
+                return found
+    return None
 
 
 def validate_media_reference(value: str, allowed_types: frozenset[str]) -> str:

@@ -20,7 +20,7 @@ New API 及其他可复用工作流。
 
 当前提供以下 portable Skills：
 
-- `ergouzi-image-gen`：提交和管理 Ergouzi 图片生成、编辑、虚拟试衣与放大任务。
+- `ergouzi-image-gen`：提交和管理 Ergouzi 图片生成、编辑、虚拟试衣、放大与背景移除任务。
 - `ergouzi-video-gen`：提交和管理 Ergouzi 视频生成、动画、数字人与人物替换任务。
 
 两个 Skill 都需要 Python 3.10+、访问 `https://ergouzi.life` 的网络能力，以及在本地

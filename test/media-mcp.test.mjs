@@ -203,6 +203,43 @@ test('createPrediction converts documented local media and reuses an idempotency
   }
 });
 
+test('createPrediction submits e-rmbg through its pinned version', async () => {
+  let submitted;
+  const api = await startServer(async (request, response) => {
+    submitted = {
+      path: request.url,
+      body: JSON.parse(await readRequest(request)),
+    };
+    json(response, 201, { id: 'task_rmbg', status: 'starting' });
+  });
+  const temporary = await mkdtemp(path.join(os.tmpdir(), 'ergouzi-mcp-test-'));
+  const imagePath = path.join(temporary, 'source.png');
+  await writeFile(
+    imagePath,
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  );
+
+  try {
+    await createPrediction(
+      credentials(api.baseUrl),
+      'ergouzi/e-rmbg',
+      { image: { $local_file: imagePath }, format: 'png' },
+      'rmbg-version-route',
+    );
+
+    assert.equal(submitted.path, '/customer/v1/predictions');
+    assert.equal(
+      submitted.body.version,
+      'a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc',
+    );
+    assert.match(submitted.body.input.image, /^data:image\/png;base64,/);
+    assert.equal(submitted.body.input.format, 'png');
+  } finally {
+    await api.close();
+    await rm(temporary, { recursive: true, force: true });
+  }
+});
+
 test('createPrediction converts a local e-video last frame image', async () => {
   let submitted;
   const api = await startServer(async (request, response) => {

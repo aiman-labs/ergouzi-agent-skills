@@ -21,6 +21,7 @@ ALL_MODELS = [
     "ergouzi/e-image-ideogram",
     "ergouzi/e-image-try-on",
     "ergouzi/e-image-upscale",
+    "ergouzi/e-rmbg",
     "ergouzi/e-video",
     "ergouzi/e-video-animate",
     "ergouzi/e-video-avatar",
@@ -66,7 +67,13 @@ class MockHandler(BaseHTTPRequestHandler):
             return
         if self.path.startswith("/customer/v1/predictions/"):
             task_id = self.path.rsplit("/", 1)[-1]
-            model = "ergouzi/e-video" if "video" in task_id else "ergouzi/e-image"
+            model = (
+                "ergouzi/e-rmbg"
+                if task_id == "task_rmbg"
+                else "ergouzi/e-video"
+                if "video" in task_id
+                else "ergouzi/e-image"
+            )
             if task_id == "task_external":
                 self._json(
                     200,
@@ -168,6 +175,26 @@ class MockHandler(BaseHTTPRequestHandler):
         self._record()
         length = int(self.headers.get("Content-Length", "0"))
         body = self.rfile.read(length) if length else b""
+        if self.path == "/customer/v1/predictions":
+            if not self.headers.get("Idempotency-Key"):
+                self._json(400, {"error": "missing idempotency key"})
+                return
+            request = json.loads(body.decode("utf-8"))
+            if request.get("version") != (
+                "a029dff38972b5fda4ec5d75d7d1cd25aeff621d2cf4946a41055d7db66b80bc"
+            ):
+                self._json(400, {"error": "missing e-rmbg version"})
+                return
+            model_input = request.get("input")
+            if not isinstance(model_input, dict):
+                self._json(400, {"error": "unexpected input"})
+                return
+            self.server.state.submitted_inputs.append(model_input)
+            self._json(
+                201,
+                {"id": "task_rmbg", "model": "ergouzi/e-rmbg", "status": "starting"},
+            )
+            return
         if self.path.endswith("/predictions") and "/models/" in self.path:
             if not self.headers.get("Idempotency-Key"):
                 self._json(400, {"error": "missing idempotency key"})
@@ -416,6 +443,45 @@ class MediaSkillTests(unittest.TestCase):
             )
             self.assertEqual(cancel.returncode, 0, cancel.stderr)
             self.assertEqual(json.loads(cancel.stdout)["status"], "canceled")
+
+    def test_background_removal_uses_its_version_prediction_route(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            source = root / "source.png"
+            source.write_bytes(b"\x89PNG\r\n\x1a\nsource")
+            result = self.run_script(
+                IMAGE_DIR,
+                "run.py",
+                [
+                    "predict",
+                    "--model",
+                    "ergouzi/e-rmbg",
+                    "--image",
+                    str(source),
+                    "--input-json",
+                    json.dumps(
+                        {
+                            "background_type": "rgba",
+                            "format": "png",
+                            "reverse": False,
+                            "threshold": 0,
+                        }
+                    ),
+                    "--no-wait",
+                    "--output-dir",
+                    str(root / "output"),
+                ],
+                root / "unused.json",
+            )
+            self.assertEqual(result.returncode, 0, result.stderr)
+            self.assertEqual(
+                self.server.state.requests[-1][:2],
+                ("POST", "/customer/v1/predictions"),
+            )
+            submitted = self.server.state.submitted_inputs[-1]
+            self.assertTrue(str(submitted["image"]).startswith("data:image/png;base64,"))
+            self.assertEqual(submitted["background_type"], "rgba")
+            self.assertEqual(submitted["format"], "png")
 
     def test_external_download_never_receives_api_key(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -704,6 +770,17 @@ class MediaSkillTests(unittest.TestCase):
                     },
                 ),
                 (IMAGE_DIR, "ergouzi/e-image-upscale", {"image": local_image}),
+                (
+                    IMAGE_DIR,
+                    "ergouzi/e-rmbg",
+                    {
+                        "background_type": "rgba",
+                        "format": "png",
+                        "reverse": False,
+                        "threshold": 0,
+                        "image": local_image,
+                    },
+                ),
                 (
                     VIDEO_DIR,
                     "ergouzi/e-video",

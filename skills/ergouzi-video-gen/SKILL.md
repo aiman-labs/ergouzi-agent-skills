@@ -2,9 +2,8 @@
 name: ergouzi-video-gen
 description: 'Submit and complete Ergouzi video generation, animation, avatar, and person-replacement tasks through ergouzi.life, including tasks that use local media files or HTTPS URLs. Use when Codex must call an ergouzi/e-video* model, poll the asynchronous task, download its output, resume a task ID, or cancel a video task.'
 license: MIT
-compatibility: 'Requires Python 3.10+ and network access to https://ergouzi.life.'
 metadata:
-  version: '0.3.1'
+  version: '0.3.2'
   author: aiman-labs
 ---
 
@@ -53,7 +52,9 @@ file conversion, request submission, task polling, and result download.
 4. Prefer the MCP tools when available. Otherwise run `scripts/run.py predict`.
    Both paths create one logical task, reuse the same idempotency key for
    bounded transport retries, record the `task_*` ID, poll to a terminal state,
-   and download successful outputs.
+   and download successful outputs. If a submission is interrupted before the
+   task ID is returned, retry the exact request with the printed
+   `--idempotency-key`; do not start a new paid request with a new key.
 5. Report the model, task ID, terminal status, and absolute saved paths.
 6. If execution was interrupted or timed out, resume with
    `status --wait --download`. Do not create a replacement task unless the user
@@ -68,6 +69,7 @@ python scripts/run.py predict --model ergouzi/e-video --prompt "<prompt>"
 python scripts/run.py predict --model ergouzi/e-video --prompt "<prompt>" --image <path-or-url>
 python scripts/run.py predict --model ergouzi/e-video-animate --image <path-or-url> --video <path-or-url>
 python scripts/run.py predict --model ergouzi/e-video-avatar --input-file <input.json> --output <result.mp4>
+python scripts/run.py predict --model ergouzi/e-video --prompt "<prompt>" --idempotency-key <stable-key>
 python scripts/run.py status --task-id <task_id> --wait --download --output <result.mp4>
 python scripts/run.py cancel --task-id <task_id>
 ```
@@ -106,6 +108,9 @@ working directory.
   proxy-storage, or persistent media-management capabilities.
 - Let Codex decide the model and construct the request from user intent. The API
   remains responsible for model validation and generation.
+- Do not pass upstream provider tokens such as `hf_api_token`.
 - Do not send the Ergouzi Authorization header to external output URLs.
+- Treat task submission and cancellation as external side effects; perform them
+  only after the user explicitly requests the action.
 - Treat `references/ai-guide.md` as optional advice. Read it only when the user
   asks for model-selection or prompting advice; it never overrides user input.

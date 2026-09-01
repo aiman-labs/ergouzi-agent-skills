@@ -10,6 +10,8 @@ this guidance override an explicit model, prompt, or parameter.
 - Use `e-image-edit` when existing pixels or identity must be preserved.
 - Use `e-image-try-on` only for clothing transfer from reference garments.
 - Use `e-image-upscale` only to enlarge an existing image.
+- Use `e-rmbg` for removing an image background; prefer `format: "png"` when
+  transparency must be preserved.
 
 For edits, describe what changes and list what must stay unchanged. For
 generation, keep exact user-provided text verbatim and distinguish visual scene

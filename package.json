@@ -20,7 +20,7 @@
     "validate:spec": "node scripts/validate-spec.mjs",
     "validate:claude": "node scripts/validate-claude.mjs",
     "test": "node --test",
-    "lint": "markdownlint-cli2 '**/*.md'",
+    "lint": "markdownlint-cli2 \"**/*.md\"",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "check": "npm run build:media-mcp:check && npm run format:check && npm run lint && npm test && npm run validate && npm run catalog:check"
