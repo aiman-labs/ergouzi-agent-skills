@@ -27,7 +27,7 @@
   },
   "license": "MIT",
   "devDependencies": {
-    "@anthropic-ai/claude-code": "2.1.220",
+    "@anthropic-ai/claude-code": "2.1.259",
     "@modelcontextprotocol/sdk": "^1.30.0",
     "ajv": "^8.20.0",
     "esbuild": "^0.28.2",
