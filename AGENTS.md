@@ -78,3 +78,18 @@ generated from, or depend on, private Ergouzi or personal repositories.
 - Reject contributions that hide private dependencies, over-broaden tool access,
   bypass user confirmation, or cannot be tested reproducibly.
 - A maintainer review and passing required checks are necessary before merge.
+
+## Pull Request Template
+
+- Every PR creation or body edit must use the target repository's applicable PR template
+  and contribution requirements. Read the template and fill it directly; do not substitute
+  a workspace template or a custom outline.
+- Preserve every template heading, field and checklist item. Do not delete, rename, merge
+  or simplify them. Fill each item with actual results; use N/A with a reason when inapplicable.
+- Check items only when supported by evidence. Never check human confirmation, human
+  authorship or maintainer approval on the user's behalf.
+- If no applicable template is available, report and resolve the template gap before
+  creating the PR; do not bypass it with a free-form body. Choose the matching template
+  when multiple templates exist.
+- After creation or editing, read back the remote PR body and compare its structure,
+  checklist and factual status with the template. A local draft or successful command is insufficient.
